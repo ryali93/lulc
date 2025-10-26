@@ -1,0 +1,338 @@
+var ANP = 114
+var version_input = '14';  //version clasificacion
+var export_point = true;
+
+// Geometrias_colectadas_assets
+  var folder = 'projects/ee-anp-lineabase/assets/training_data/ANP_'+ANP;
+  var list = ee.List([]);
+  
+  var palette_0_17 = ["ffffff", "ff0000","b40b0b","ffbd08","5bdd4a","139b01","17ff7e","0f5e00","ffec13",
+                      "ceb747","f8b3ff","d72fff","00ff00","ccebc5","13f5ff","0000ff","3b8aff","d4d4d4"];
+  var palette_0_18 =   ["ffffff", "ff0000","b40b0b","cf1cd6","5bdd4a","139b01","17ff7e","0f5e00","f3ff73",
+                      "ceb747","f8b3ff","d72fff","00ff00","ccebc5","13f5ff","0000ff","3b8aff","d4d4d4", "ff7b06" ];
+                      
+  function list_folder_to_featColl(e) {
+    var path = e.id;
+    var fc = ee.FeatureCollection(path)
+              // .aggregate_sum('system:asset_size')
+              // .divide(ee.Number(1024).pow(4))
+    return fc; 
+  }
+  
+  // Function to recursively concatenate asset lists from multiple pages
+  function listAssetsRecursive(folder, pageToken) {
+    var options = {};
+    if (pageToken !== undefined) {
+      options.pageToken = pageToken;
+    }
+  
+    var result = ee.data.listAssets(folder, options);
+    var assets = result['assets'];
+    list = list.cat(assets.map(list_folder_to_featColl));
+  
+    if (result.nextPageToken !== null) {
+      // Call the function recursively for the next page
+      listAssetsRecursive(folder, result.nextPageToken);
+    }
+  }
+  
+  // Start listing assets
+  listAssetsRecursive(folder);
+  
+  // Print the final concatenated asset list
+  // print('Final Asset List:', list);
+  
+  var geometry_draw = ee.FeatureCollection(list).flatten();
+  
+  print(geometry_draw.limit(100), geometry_draw.size())
+  // Map.addLayer(geometry_draw)
+  Map.centerObject(geometry_draw)
+  
+  if(export_point){
+    var points = geometry_draw
+    .map(function (f) { 
+      return ee.Feature(f).set('geometry_type', ee.Feature(f).geometry().type()); })
+    .filter(ee.Filter.equals('geometry_type', 'Point'));
+
+    points = ee.FeatureCollection(points);
+    print('Puntos filtrados ANP export',points.size())
+    
+    Export.table.toDrive({
+      collection: points,
+      description: 'ANP_' + ANP +'_points' ,
+      folder : 'ANP_POINT_VALIDATE',
+      fileFormat: 'SHP'
+    });
+  }
+  
+  
+  var styledPoints = ee.FeatureCollection(geometry_draw).map(
+    function(point) {
+      var classId = point.get('mes6'),
+          color = ee.List(palette_0_18).get(classId);
+      
+      return point.set({ style: { color: color } });
+    }
+      );
+    // if(month == 6){
+    // Map.addLayer(asset_samples_random) 
+    Map.addLayer(
+      styledPoints.style({
+        styleProperty: "style",
+        width: 1.5,
+      }), {}, 'PUNTOS ALEATORIOS DE VALIDACION', true
+    
+    );
+    // }
+
+var assetFiltros = "projects/ee-anp-lineabase/assets/clasificacion-post"
+
+var image_FE = ee.ImageCollection(assetFiltros)
+               .filterMetadata('code_region', 'equals', ANP)
+               .filterMetadata('version', 'equals', version_input)
+               .first()
+
+print(image_FE);
+
+Map.addLayer(image_FE.reduce('mode'), {
+    'min': 0,
+    'max': 18,
+    'palette': palette_0_18
+}, 'mode',false);
+
+//-----
+var meses = [
+    1,2,3,
+    4,5,
+    6,
+    7,8,9,
+    10,11,12
+    ];
+var bandNames = []
+meses.forEach(function(mes){
+bandNames.push('mes'+mes);
+ });
+
+print(bandNames)
+
+var PuntoValida = geometry_draw
+bandNames.forEach(function(band){
+            
+            PuntoValida = PuntoValida.remap([ 1,  2,  3,  4,  5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+                                             '1', '2','3','4', '5', '6', '7', '8','9', '10', '11','12', '13','14','15','16','17','18'], 
+                                            [1,  2,  3,  4,  5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 
+                                             1,  2,  3,  4,  5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], band)
+  })
+  
+  print('Lista de años',bandNames)
+  print('PuntoValida a usar',PuntoValida.size())
+  print(PuntoValida.limit(100))
+ 
+var Glacier_col3 = image_FE; 
+
+print('class',Glacier_col3)
+
+//******
+/**
+* Accuracy_Multitemporal (iterador)
+* by: Efrain
+*/ 
+var GlobalAccuracy = []
+var MatrixList = []
+for (var month=1; month<=12; month++) {
+  //print(year)
+  var listaAcuraccy = []
+  var exportAccuracy = []
+
+  var params = { 
+      'month': month,     // AÑO
+      'geometry': null
+  };
+
+  var classification = Glacier_col3
+                      .select('clasificacion_'+params.month)
+                      .rename('classification')
+
+  // ACURACCY
+  var PuntoValidaSel = PuntoValida
+                    // .filterMetadata('mes'+params.month, 'not_equals', 3);  // se excluye no observado
+  
+  var validacao = classification.sampleRegions(PuntoValidaSel,['mes'+params.month], 30, null,2);
+  // print('here',validacao.limit(1))
+  // var CalcErrorMatrix = validacao.errorMatrix('classification','class_'+params.year,[1,2]);
+  var CalcErrorMatrix = validacao.errorMatrix('mes'+params.month,'classification',[1,  2,  3,  4,  5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);   // 1: glaciar y 2: no glaciar -> [1,2]
+      // print('CalcErrorMatrix'+params.month,CalcErrorMatrix, CalcErrorMatrix.accuracy())
+      // print('consumersAccuracy'+params.month, CalcErrorMatrix.consumersAccuracy())
+      // print('producersAccuracy'+params.month, CalcErrorMatrix.producersAccuracy())
+      // print('kappa'+params.month, CalcErrorMatrix.kappa())
+      // print(CalcErrorMatrix.array())
+      // print(CalcErrorMatrix.order())
+      
+  //Calculate metrics
+  var tp = CalcErrorMatrix.array().get([0,0]);  //true positive in matrix
+  var fn = CalcErrorMatrix.array().get([0,1]);  //false negative in matrix
+  var fp = CalcErrorMatrix.array().get([1,0]);  //false positive in matrix
+  var tn = CalcErrorMatrix.array().get([1,1]);  //true negative  in matrix
+  var precision= tp.divide(tp.add(fp));
+  var recall= tp.divide(tp.add(fn));
+  var F1score= ee.Number(2).multiply(precision.multiply(recall).divide(precision.add(recall)));
+  
+  //create feature null with set metrixs per year
+  var matrixYear = ee.Feature(null, { Ayear: params.month,
+                                      Amatrix: CalcErrorMatrix.array(),
+                                      Aorder: CalcErrorMatrix.order(),
+                                      // M00_tp: tp,
+                                      // M01_fn: fn,
+                                      // M10_fp: fp,
+                                      // M11_tn: tn,
+                                      accuracy:CalcErrorMatrix.accuracy(),
+                                      consumersAccuracy:CalcErrorMatrix.consumersAccuracy(),
+                                      producersAccuracy:CalcErrorMatrix.producersAccuracy(),
+                                      kappa:CalcErrorMatrix.kappa(),
+                                      // precision: precision,
+                                      // recall: recall,
+                                      // F1score: F1score,
+ 
+                                    })
+  MatrixList.push(matrixYear)
+      
+  listaAcuraccy.push(CalcErrorMatrix.accuracy())
+
+  //print(listaAcuraccy)
+  GlobalAccuracy.push(listaAcuraccy)
+}
+
+// Map.addLayer(PuntoValida)
+print('GlobalAccuracy',GlobalAccuracy)
+
+// var featureCollection = ee.FeatureCollection(GlobalAccuracy
+//                         .map(function(element){
+//                         return ee.Feature(null,{prop:element})}))
+
+// Export.table.toDrive({
+//   collection: featureCollection,
+//   folder: 'Export_accuracy_Glacier_col1_ALL',
+//   description:'Export_accuracy'+'_Glacier_col1_ALL',
+//   fileFormat: 'CSV'
+// });
+
+print('GlobalAccuracy_all_metrics',MatrixList)
+
+// Export the FeatureCollection.
+Export.table.toDrive({
+  collection: ee.FeatureCollection(MatrixList),
+  folder: 'Export_accuracy_ANP_v1',
+  description: 'ANP_'+ ANP + '_export_MatrixList_Accuracy_all_metrics_ANP' + '-v' + version_input,
+  fileFormat: 'CSV'
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function Legend() {
+  
+  var legendColors = [
+          {color: palette_0_18[1], label:'c1_area_urbana y carret'},
+          {color: palette_0_18[2], label:'c2_mineria'},
+          {color: palette_0_18[3], label:'c3_agricultura'},
+          {color: palette_0_18[4], label:'c4_bosque_seco'},
+          {color: palette_0_18[5], label:'c5_bosque'},
+          {color: palette_0_18[6], label:'c6_manglar'},
+          {color: palette_0_18[7], label:'c7_bosque_plantado'},
+          {color: palette_0_18[8], label:'c8_pastizales'},
+          {color: palette_0_18[9], label:'c9_arbustal_matorral'},
+          {color: palette_0_18[10], label:'c10_poca_vegetacion'},
+          {color: palette_0_18[11], label:'c11_totoral'},
+          {color: palette_0_18[12], label:'c12_bofedal'},
+          {color: palette_0_18[13], label:'c13_areas_humedas_costeras'},
+          {color: palette_0_18[14], label:'c14_glaciar'},
+          {color: palette_0_18[15], label:'c15_Agua'},
+          {color: palette_0_18[16], label:'c16_aguas_maritima'},
+          {color: palette_0_18[17], label:'c17_sin_dato'},
+          {color: palette_0_18[18], label:'c18_Acuicultura'}
+  ];
+
+  // Crear un panel para la leyenda
+  var legendPanel = ui.Panel({
+    style: {
+      position: 'bottom-left',
+      padding: '8px 15px'
+    }
+  });
+
+  // Crear un título para la leyenda
+  var legendTitle = ui.Label({
+    value: 'Leyenda general',
+    style: {fontWeight: 'bold', fontSize: '16px', margin: '0 0 4px 0'}
+  });
+
+  legendPanel.add(legendTitle);
+
+  // Crear un panel de cuadrícula para organizar en columnas
+  var gridPanel = ui.Panel({
+    layout: ui.Panel.Layout.Flow('horizontal'),
+    style: {stretch: 'horizontal'}
+  });
+
+  // Número de columnas deseadas
+  var columns = 2;
+
+  // Crear un array de columnas como paneles
+  var columnPanels = [];
+  for (var i = 0; i < columns; i++) {
+    columnPanels.push(ui.Panel({
+      layout: ui.Panel.Layout.Flow('vertical'),
+      style: {padding: '0 10px'}
+    }));
+  }
+
+  // Añadir elementos a las columnas alternando entre ellas
+  legendColors.forEach(function(item, index) {
+    var colorBox = ui.Label('', {
+      backgroundColor: item.color,
+      padding: '6px',
+      margin: '0 0 4px 0'
+    });
+
+    var description = ui.Label(item.label, {
+      margin: '0 0 4px 6px'
+    });
+
+    var legendItem = ui.Panel({
+      widgets: [colorBox, description],
+      layout: ui.Panel.Layout.Flow('horizontal')
+    });
+
+    // Añadir a la columna correspondiente
+    columnPanels[index % columns].add(legendItem);
+  });
+
+  // Añadir todas las columnas al panel de cuadrícula
+  columnPanels.forEach(function(panel) {
+    gridPanel.add(panel);
+  });
+
+  // Añadir el panel de cuadrícula a la leyenda
+  legendPanel.add(gridPanel);
+
+  return legendPanel;
+}
+
+var legend_MB = Legend();
+Map.add(legend_MB);  // Añadir la leyenda al mapa
+
+         
+
+
+
+  

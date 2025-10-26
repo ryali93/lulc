@@ -1,0 +1,333 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var geometry = 
+    /* color: #d63000 */
+    /* shown: false */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[-81.71231756727381, 0.36764767459686787],
+          [-81.71231756727381, -18.631001193724725],
+          [-68.5287238172738, -18.631001193724725],
+          [-68.5287238172738, 0.36764767459686787]]], null, false);
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var regionsclass =  ee.Image('projects/ee-eturpocayo/assets/sernanp/AUXILIAR_DATA/limite_anp_y_za_v2_raster').selfMask();
+var driveFolder = 'ANP-EXPORT';
+var OuputFileName = 'ANP_ESTADISTICAS_F_limite_anp_y_za_31';
+
+
+var palette_0_24 = ["ffffff", "ff0000","b40b0b","ffbd08","5bdd4a","139b01","17ff7e","0f5e00","ffec13",
+                    "ceb747","f8b3ff","d72fff","00ff00","ccebc5","13f5ff","0000ff","3b8aff","d4d4d4", "ff7b06", "fff793", "a0a1af", "73ccd6",
+                    "b16d04","d2ffa1", "39ff00"];
+
+// CODIGO DE ANP Y VERSION A INTEGRAR
+var codesAndVersions = [
+ //ANP, VERSION
+    [101,	'31'],
+    [102,	'31'],
+    [103,	'31'],
+    [104,	'31'],
+    [105,	'31'],
+    [106,	'31'],
+    [107,	'31'],
+    [108,	'31'],
+    [109,	'31'],
+    [110,	'31'],
+    [111,	'31'],
+    [112,	'31'],
+    [113,	'31'],
+    [114,	'31']
+  ];
+        
+
+// Integrate
+//
+var collection
+var collectionsByRegion = codesAndVersions
+    .map(
+        function (codeAndVersion) {
+            collection = ee.ImageCollection("projects/ee-anp-lineabase/assets/clasificacion-post")
+
+            var images = collection
+                .filterMetadata('code_region', 'equals', codeAndVersion[0])
+                .filterMetadata('version', 'equals', codeAndVersion[1])
+                .map(
+                    function (image) {
+                        return image.mask(regionsclass.eq(codeAndVersion[0]));
+                    }
+                );
+                            //print(codeAndVersion[0], codeAndVersion[1])
+              // print(images)
+            return images.mosaic().byte();
+        }
+    );
+
+var allRegionsClassification = ee.ImageCollection.fromImages(ee.List(collectionsByRegion));
+
+//
+var clasification = allRegionsClassification.min()
+print(clasification)
+
+var mode = clasification.reduce('mode')
+clasification = clasification.addBands(mode.rename('clasificacion_moda'))
+
+// EXPORTS 
+Export.image.toAsset({
+      'image': clasification.byte(),
+      'description': 'clasificacion-ANP'+ '-' + 'GRUPO1-' + 'v3',
+      'assetId': 'projects/ee-anp-lineabase/assets/'+'clasificacion-' +'ANP'+ '-' +  'GRUPO1-' + 'v3',
+      'pyramidingPolicy': {
+          '.default': 'mode'
+      },
+      'region': geometry,
+      'scale': 4.7,
+      'maxPixels': 1e13
+  });
+
+/**
+* @description
+*    calculate area
+* 
+* @author
+*    João Siqueira
+* 
+*/
+
+// Change the scale if you need.
+var scale = 4.7;
+
+// Define a list of bands_name to export  
+var bands_name = [
+    '1', '2', '3', '4', '5', '6',
+    '7', '8', '9', '10', '11', '12', 'moda'
+];  
+
+
+/**
+* 
+*/
+// Territory image
+var territory = regionsclass;
+
+// LULC raster_clasification image
+var raster_clasification = clasification.selfMask();
+
+// Map.addLayer(raster_clasification,vis,'raster_clasification',false)
+Map.addLayer(territory.randomVisualizer(),{},'territory',false)
+
+for (var mesI=0;mesI<bands_name.length;mesI++) {
+
+  var vis = {
+      'bands': 'clasificacion_'+bands_name[mesI],
+      'min': 0,
+      'max': 24,
+      'palette': palette_0_24
+  };
+  Map.addLayer(raster_clasification, vis, 'clasificacion_'+bands_name[mesI],false);
+
+}
+
+
+// Image area in km2
+var pixelArea = ee.Image.pixelArea().divide(10000); //ha
+
+// Geometry to export
+var geometry = regionsclass.geometry();
+
+/**
+* Convert a complex ob to feature collection
+* @param obj 
+*/
+var convert2table = function (obj) {
+
+    obj = ee.Dictionary(obj);
+
+    var territory = obj.get('territory');
+
+    var classesAndAreas = ee.List(obj.get('groups'));
+
+    var tableRows = classesAndAreas.map(
+        function (classAndArea) {
+            classAndArea = ee.Dictionary(classAndArea);
+
+            var classId = classAndArea.get('class');
+            var area = classAndArea.get('sum');
+
+            var tableColumns = ee.Feature(null)
+                .set('territory', territory)
+                .set('class', classId)
+                .set('area', area);
+
+            return tableColumns;
+        }
+    );
+
+    return ee.FeatureCollection(ee.List(tableRows));
+};
+
+/**
+* Calculate area crossing a cover map (deforestation, raster_clasification)
+* and a region map (states, biomes, municipalites)
+* @param image 
+* @param territory 
+* @param geometry
+*/
+var calculateArea = function (image, territory, geometry) {
+
+    var reducer = ee.Reducer.sum().group(1, 'class').group(1, 'territory');
+
+    var territotiesData = pixelArea.addBands(territory).addBands(image)
+        .reduceRegion({
+            reducer: reducer,
+            geometry: geometry,
+            scale: scale,
+            maxPixels: 1e12
+        });
+
+    territotiesData = ee.List(territotiesData.get('groups'));
+
+    var areas = territotiesData.map(convert2table);
+
+    areas = ee.FeatureCollection(areas).flatten();
+
+    return areas;
+};
+
+var areas = bands_name.map(
+    function (band) {
+        var image = raster_clasification.select('clasificacion_' + band);
+        // var image = raster_clasification.select(band)
+        
+        var areas = calculateArea(image, territory, geometry);
+
+        // set additional properties
+        areas = areas.map(
+            function (feature) {
+                return feature.set('mes', band);
+            }
+        );
+
+        return areas;
+    }
+);
+
+areas = ee.FeatureCollection(areas).flatten();
+
+Export.table.toDrive({
+    collection: areas,
+    description: OuputFileName,  
+    folder: driveFolder,
+    fileNamePrefix: OuputFileName,
+    fileFormat: 'CSV'
+});
+
+
+
+
+
+
+
+
+
+
+
+
+function Legend() {
+  
+  var legendColors = [
+          {color: palette_0_24[1], label:'c1_area_urbana y carret'},
+          {color: palette_0_24[2], label:'c2_mineria'},
+          {color: palette_0_24[3], label:'c3_agricultura'},
+          {color: palette_0_24[4], label:'c4_bosque_seco'},
+          {color: palette_0_24[5], label:'c5_bosque'},
+          {color: palette_0_24[6], label:'c6_manglar'},
+          {color: palette_0_24[7], label:'c7_bosque_plantado'},
+          {color: palette_0_24[8], label:'c8_pastizales'},
+          {color: palette_0_24[9], label:'c9_arbustal_matorral'},
+          {color: palette_0_24[10], label:'c10_poca_vegetacion'},
+          {color: palette_0_24[11], label:'c11_totoral'},
+          {color: palette_0_24[12], label:'c12_bofedal'},
+          {color: palette_0_24[13], label:'c13_areas_humedas_costeras'},
+          {color: palette_0_24[14], label:'c14_glaciar'},
+          {color: palette_0_24[15], label:'c15_Agua'},
+          {color: palette_0_24[16], label:'c16_aguas_maritima'},
+          {color: palette_0_24[17], label:'c17_sin_dato'},
+          {color: palette_0_24[18], label:'c18_Acuicultura'},
+          {color: palette_0_24[19], label:'c19_Hipersalina'},
+          {color: palette_0_24[20], label:'c20_Banco_arena'},
+          {color: palette_0_24[21], label:'c21_Tillandsial'},
+          {color: palette_0_24[22], label:'c22_Cultivos transitorios'},
+          {color: palette_0_24[23], label:'c23_Cultivos permanentes'},
+          {color: palette_0_24[24], label:'c24_Lomas_Costero'}
+  ];
+
+  // Crear un panel para la leyenda
+  var legendPanel = ui.Panel({
+    style: {
+      position: 'bottom-left',
+      padding: '8px 15px'
+    }
+  });
+
+  // Crear un título para la leyenda
+  var legendTitle = ui.Label({
+    value: 'Leyenda general',
+    style: {fontWeight: 'bold', fontSize: '16px', margin: '0 0 4px 0'}
+  });
+
+  legendPanel.add(legendTitle);
+
+  // Crear un panel de cuadrícula para organizar en columnas
+  var gridPanel = ui.Panel({
+    layout: ui.Panel.Layout.Flow('horizontal'),
+    style: {stretch: 'horizontal'}
+  });
+
+  // Número de columnas deseadas
+  var columns = 2;
+
+  // Crear un array de columnas como paneles
+  var columnPanels = [];
+  for (var i = 0; i < columns; i++) {
+    columnPanels.push(ui.Panel({
+      layout: ui.Panel.Layout.Flow('vertical'),
+      style: {padding: '0 10px'}
+    }));
+  }
+
+  // Añadir elementos a las columnas alternando entre ellas
+  legendColors.forEach(function(item, index) {
+    var colorBox = ui.Label('', {
+      backgroundColor: item.color,
+      padding: '6px',
+      margin: '0 0 4px 0'
+    });
+
+    var description = ui.Label(item.label, {
+      margin: '0 0 4px 6px'
+    });
+
+    var legendItem = ui.Panel({
+      widgets: [colorBox, description],
+      layout: ui.Panel.Layout.Flow('horizontal')
+    });
+
+    // Añadir a la columna correspondiente
+    columnPanels[index % columns].add(legendItem);
+  });
+
+  // Añadir todas las columnas al panel de cuadrícula
+  columnPanels.forEach(function(panel) {
+    gridPanel.add(panel);
+  });
+
+  // Añadir el panel de cuadrícula a la leyenda
+  legendPanel.add(gridPanel);
+
+  return legendPanel;
+}
+
+var legend_MB = Legend();
+Map.add(legend_MB);  // Añadir la leyenda al mapa

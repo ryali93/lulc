@@ -1,0 +1,23 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var geometry = /* color: #d63000 */ee.Geometry.MultiPoint();
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var MTC_dep = ee.FeatureCollection("projects/ee-anp-lineabase/assets/AUXILIAR-DATA/externo/MTC/red_vial_departamental_dic18"),
+    MTC_nac = ee.FeatureCollection("projects/ee-anp-lineabase/assets/AUXILIAR-DATA/externo/MTC/red_vial_nacional_dic18"),
+    MTC_vec = ee.FeatureCollection("projects/ee-anp-lineabase/assets/AUXILIAR-DATA/externo/MTC/red_vial_vecinal_dic18");
+    
+var vias_MTC = MTC_dep.merge(MTC_nac)
+                      .merge(MTC_vec);
+                      
+print(vias_MTC.first().propertyNames())
+print(vias_MTC.aggregate_histogram('JERARQ_L'))
+print(vias_MTC.aggregate_histogram('SUPERFIC_L'))
+
+var mtc_asfaltado = vias_MTC.filter(ee.Filter.inList("SUPERFIC_L", ["Asfaltado", "Asfaltado económico"]));
+var mtc_no_asfaltado= vias_MTC.filter(ee.Filter.inList("SUPERFIC_L", ["Afirmado", "Trocha", "Sin afirmar"]));
+
+// Map.addLayer(vias_MTC)
+Map.addLayer(mtc_asfaltado.style({color:'red', width:2, fillColor:'00000000'}),{},'mtc_asfaltado')
+Map.addLayer(mtc_no_asfaltado.style({color:'orange', width:1, fillColor:'00000000'}),{},'mtc_no_asfaltado')
+
+print(mtc_asfaltado.size(), mtc_no_asfaltado.size())
+

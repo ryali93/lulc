@@ -1,0 +1,9 @@
+var region='106'
+var version= '2'
+var list_month = ee.List.sequence(1, 12, 1).getInfo()
+
+list_month.forEach(function(id){
+  var assetId = 'projects/ee-anp-lineabase/assets/training_data/samples/samples-' + region + '-2023-month' + id + '-' + version;
+  // ee.data.deleteAsset(assetId)
+  
+}) 

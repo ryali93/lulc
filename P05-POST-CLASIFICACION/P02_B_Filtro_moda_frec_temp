@@ -1,0 +1,482 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var REGION_APPLY = /* color: #d63000 */ee.FeatureCollection([]),
+    table = ee.FeatureCollection("projects/ee-anp-lineabase/assets/AUXILIAR-DATA/limite_anp_v2");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+// fILTRO FRECUENCIA Y MODA
+
+var param = {
+    code_region: 113,  //id ANP de Clasificacion 
+    month: 6,  // Solo visualizacion 
+    FF_naturales:{
+      clasesNat:[3,4,5,6,7,8,9,12,10,11,13,14,16], // Clases a considerar para vegetacion nativa 
+      native_vegetation : 90,    // % vegetación nativa minima para que sea considerado el filtro de frecuencia
+      perc_majority_nat: 90,         // % porcentaje mayoritario para que prevalezca una clase
+    },
+    FF_usos:{
+      clasesUso:[1,2], // Clases a considerar para uso
+      usos_cobertura : 50,          // % Clases de uso minima para que sea considerado el filtro de frecuencia
+      perc_majority_uso: 50,        // % porcentaje mayoritario para que prevalezca una clase
+    },
+    version_input:'22', //
+    version_output:'23',
+    exclusion:{  // Indicar en la lista las clases y años a excluir en el filtro
+      clases : [],  //lista de clases a excluir en todos los años
+      years  : [],  //lista de años a excluir con todas la clases
+    },
+    ExcluFirstLastYear : false  // true: Para no aplicar filtro en los primeros y ultimos años con clases continuas
+                                // false: Para aplicar filtro a todos los añoscontinuas
+};
+
+
+var cloud_Blue_thr = 1600; 
+
+// Combinacion de bandas para color natural
+var RGB = {bands: ['R', 'N', 'B'], gain: [0.2, 0.06, 0.2]}; // ANDES
+//--------------------------------------------
+
+var assetClasif = "projects/ee-anp-lineabase/assets/clasificacion-post";
+var assetFiltros  =   "projects/ee-anp-lineabase/assets/clasificacion-post";
+
+
+var AssetRegions = 'projects/ee-eturpocayo/assets/sernanp/AUXILIAR_DATA/limite_anp_y_za_v2';
+var AssetRegionsRaster = 'projects/ee-eturpocayo/assets/sernanp/AUXILIAR_DATA/limite_anp_y_za_v2_raster';
+
+var palette_0_17 = ["ffffff", "ff0000","b40b0b","ffbd08","5bdd4a","139b01","17ff7e","0f5e00","ffec13","ceb747","f8b3ff","d72fff","00ff00","ccebc5","13f5ff","0000ff","3b8aff","d4d4d4"];
+var vis = {
+    'min': 0,
+    'max': 17,
+    'palette': palette_0_17
+};
+// Obtiene la version de salida en base al ciclo
+// var version = getVersion(param.ciclo);
+var version_input = param.version_input;
+var version_output = param.version_output;
+var prefixo_out =  'ANP'+ '-' + param.code_region + '-' ;
+
+var dirout  = assetFiltros
+
+var regionesclass = ee.FeatureCollection(AssetRegions).filterMetadata('Codigo_uni', 'equals', param.code_region)
+var regionRaster = ee.Image(AssetRegionsRaster).eq(param.code_region).selfMask()
+
+var mosaic = ee.ImageCollection('projects/ee-anp-lineabase/assets/mosaics')
+                    .filterBounds(regionesclass.geometry().bounds())
+                    .map(function(image){
+                        var Mapbiomas = ee.Image('projects/mapbiomas-public/assets/peru/collection2/mapbiomas_peru_collection2_integration_v1')
+                                          .select('classification_2021')
+                        image = image.updateMask(image.select('B').lte(cloud_Blue_thr).or(Mapbiomas.eq(34).unmask(regionRaster)))
+                        
+                        var ndvi = image.normalizedDifference(['N', 'R']).rename('NDVI');
+                        var ndwi = image.normalizedDifference(['G', 'N']).rename('NDWI');
+                        
+                        return image.addBands(ndvi)
+                                    .addBands(ndwi)
+                    });
+                    
+var Classif_Input = ee.ImageCollection(assetFiltros)
+                      .filterMetadata('code_region', 'equals', param.code_region)
+                      .filterMetadata('version', 'equals', param.version_input)
+                      .mosaic()
+                      
+print(Classif_Input)
+
+// get band names list 
+
+var years = [
+    1,2,3,
+    4,5,6,
+    7,8,9,
+    10,11,12
+    ];
+    
+var bandNames = ee.List(
+    years.map(
+        function (year) {
+            return 'clasificacion_' + String(year);
+        }
+    )
+);
+
+var bandNamesExclude = ee.List(
+    param.exclusion.years.map(
+        function (year) {
+            return 'clasificacion_' + String(year);
+        }
+    )
+);
+
+
+// Add bands mask
+  // generate a histogram dictionary of [bandNames, image.bandNames()]
+  var bandsOccurrence = ee.Dictionary(
+      bandNames.cat(Classif_Input.bandNames()).reduce(ee.Reducer.frequencyHistogram())
+  );
+  
+  // print(bandsOccurrence);
+  
+  // insert a masked band 
+  var bandsDictionary = bandsOccurrence.map(
+      function (key, value) {
+          return ee.Image(
+              ee.Algorithms.If(
+                  ee.Number(value).eq(2),
+                  Classif_Input.select([key]).byte(),
+                  ee.Image(17).rename([key]).byte().updateMask(Classif_Input.select(0))
+              )
+          );
+      }
+  );
+  // convert dictionary to image
+  var imageAllBands = ee.Image(
+      bandNames.iterate(
+          function (band, image) {
+              return ee.Image(image).addBands(bandsDictionary.get(ee.String(band)));
+          },
+          ee.Image().select()
+      )
+  );
+  Classif_Input = imageAllBands
+
+
+
+Classif_Input =Classif_Input.select(bandNames)
+print(Classif_Input)
+
+var filtrofreq = function(mapbiomas){
+  ////////Calculando frequencias
+  // General rule
+  var exp = '100*((b(0)+b(1)+b(2)+b(3)+b(4)+b(5)+b(6)+b(7)+b(8)+b(9)+b(10)+b(11))/12)';
+  
+  //Naturales
+    // get frequency
+    var frequency = ee.Image(0)
+    param.FF_naturales.clasesNat.forEach(function(clas){
+      var frecClas = mapbiomas.eq(clas).expression(exp).rename('class'+clas);
+      frequency = frequency.addBands(frecClas)
+    })
+    
+    //Máscara de clases seleccionadas (freq >%)
+    var vegMask = frequency.reduce('sum');
+    vegMask = ee.Image(0).where(vegMask.gt(param.FF_naturales.native_vegetation), 1)
+    
+    // Remap
+    var vegMap = ee.Image(0)
+    param.FF_naturales.clasesNat.forEach(function(clas){
+          vegMap = vegMap.where(vegMask.eq(1).and(frequency.select('class'+clas).gt(param.FF_naturales.perc_majority_nat)), clas)
+    })
+  
+    vegMap = vegMap.updateMask(vegMap.neq(0))
+    
+  // No Naturales
+    // get frequency
+    var frequency2 = ee.Image(0)
+    param.FF_usos.clasesUso.forEach(function(clas){
+      var frecClas = mapbiomas.eq(clas).expression(exp).rename('class'+clas);
+      frequency2 = frequency2.addBands(frecClas)
+    })
+    
+    //Máscara de clases seleccionadas (freq >%)
+    var vegMask2 = frequency2.reduce('sum');
+    vegMask2 = ee.Image(0).where(vegMask2.gt(param.FF_usos.usos_cobertura), 1)
+    
+    // Remap
+    var vegMap2 = ee.Image(0)
+    param.FF_usos.clasesUso.forEach(function(clas){
+          vegMap2 = vegMap2.where(vegMask2.eq(1).and(frequency2.select('class'+clas).gt(param.FF_usos.perc_majority_uso)), clas)
+    })
+  
+    vegMap2 = vegMap2.updateMask(vegMap2.neq(0))
+    
+  
+  var Clasif_Filtro_Frec = mapbiomas.where(vegMap, vegMap)
+                                    .where(vegMap2, vegMap2)
+  
+  return Clasif_Filtro_Frec;
+}
+
+var Clasif_Filtro_Frec = filtrofreq(Classif_Input)
+var Class_Original = Classif_Input;
+//
+  var temp
+  print(REGION_APPLY);
+  print((REGION_APPLY.getInfo().features.length>0))
+  if (REGION_APPLY.getInfo().features.length>0){
+    temp = Clasif_Filtro_Frec.clip(REGION_APPLY).selfMask()
+    Clasif_Filtro_Frec = Class_Original.where(temp.gt(0),temp)
+    print('Mask------')
+  }
+
+
+
+
+var class_col2 = Classif_Input
+
+// SELECT THE CLASS OF THE FIRST YEAR TO BE REPEATED NEXT YEAR
+var FirstYear_Select = bandNames
+        .iterate(
+            function (bandName, previousImage) {
+
+                var currentImage = class_col2.select(ee.String(bandName));
+
+                previousImage = ee.Image(previousImage);
+                
+                currentImage = currentImage.eq(previousImage.select(0))
+                                           .multiply(currentImage)//.selfMask();
+
+                return ee.Image(previousImage).addBands(currentImage);
+
+            }, ee.Image(class_col2.select([bandNames.get(0)]))
+        );
+        
+FirstYear_Select = ee.Image(FirstYear_Select).select(bandNames);
+
+var t0 = 1;
+var t1 = 12;
+//print(FirstYear_Select)
+
+function FirstYearContinuityClass (year, previousImage2) {
+
+                var currentImage = FirstYear_Select.select(ee.Number(year).subtract(t0));
+                    previousImage2 = ee.Image(previousImage2)
+                var num = ee.Number(year).subtract(t0)
+                    currentImage = currentImage.where(previousImage2.select(num).eq(0), 0)//.selfMask()
+                
+                return ee.Image(previousImage2).addBands(currentImage);
+
+            }
+
+var firstYear = ee.Image(ee.List.sequence(t0, t1)
+                      .iterate(FirstYearContinuityClass,FirstYear_Select.select(0)))
+                      .select(bandNames)
+
+// SELECT THE CLASS OF THE LAST YEAR TO BE REPEATED NEXT YEAR
+var LastYear_Select = bandNames
+        .iterate(
+            function (bandName, previousImage) {
+
+                var currentImage = class_col2.select(ee.String(bandName));
+
+                previousImage = ee.Image(previousImage);
+                
+                currentImage = currentImage.eq(previousImage.select(0))
+                                           .multiply(currentImage)//.selfMask();
+
+                return ee.Image(previousImage).addBands(currentImage);
+
+            }, ee.Image(class_col2.select([bandNames.get(11)]))
+        );
+        
+LastYear_Select = ee.Image(LastYear_Select).select(bandNames);
+// Map.addLayer(LastYear_Select, {}, 'LastYear_Select', false)
+
+var LastYear_Select_rev= LastYear_Select.select(bandNames.reverse())
+function LastYearContinuityClass (year, previousImage2) {
+
+                var currentImage = LastYear_Select_rev.select(ee.Number(year).subtract(t0));
+                    previousImage2 = ee.Image(previousImage2)
+                var num = ee.Number(year).subtract(t0)
+                    currentImage = currentImage.where(previousImage2.select(num).eq(0), 0)//.selfMask()
+                
+                return ee.Image(previousImage2).addBands(currentImage);
+
+            }
+
+var lastYear = ee.Image(ee.List.sequence(t0, t1)
+                      .iterate(LastYearContinuityClass,LastYear_Select_rev.select(0)))
+                      .select(bandNames)
+// print(lastYear)
+// Map.addLayer(lastYear, {}, 'lastYear_identifi', false)
+
+// Joint Band continuity class in first and last year
+var continuityFisrtLastYear = firstYear.selfMask().unmask(lastYear.selfMask())
+//Map.addLayer(continuityFisrtLastYear, {}, 'continuityFisrtLastYear', false)
+if (param.ExcluFirstLastYear){
+    Clasif_Filtro_Frec = Clasif_Filtro_Frec.blend(continuityFisrtLastYear)
+   }
+
+var Class_Original = Classif_Input;
+var Class_Filtrada = Clasif_Filtro_Frec;
+
+//Excluir clase y años 
+// Classes Exclude
+  if(param.exclusion.clases.length>0){
+     var clasifi = ee.List([])
+        
+        param.exclusion.clases.forEach(function(clase){
+          var clasif_code =Class_Original.eq(clase).selfMask()
+          clasifi = clasifi.add(Class_Original.updateMask(clasif_code).selfMask())
+        })
+        
+        clasifi = ee.ImageCollection(clasifi)
+        clasifi = clasifi.max()
+        Map.addLayer(clasifi,{},'clasific exclu_classe',false)
+        Class_Filtrada = Class_Filtrada.blend(clasifi)
+        print('Clases excluidos en el Filtro temporal', param.exclusion.clases);
+  }
+
+// Year Exclude
+  if(param.exclusion.years.length>0){
+    var yearExlud = Class_Original.select(bandNamesExclude);  //addbands
+    Class_Filtrada =  Class_Filtrada.addBands(yearExlud,null,true); // Remplaza las clases a no modificar
+    print('Años excluidos en el Filtro temporal', param.exclusion.years);
+  }
+  
+Clasif_Filtro_Frec =Class_Filtrada.select(bandNames)
+                    .updateMask(regionRaster);
+
+
+var moda_anual = Clasif_Filtro_Frec.reduce('mode')
+var area_urbana = moda_anual.eq(1);
+var mineria = moda_anual.eq(2);
+var bosque = moda_anual.eq(5);
+
+
+var Clasif_Filtro_Frec_mode = Clasif_Filtro_Frec.where(area_urbana, 1)
+                                       .where(mineria, 2)
+                                      // .where(bosque, 5)
+
+
+Clasif_Filtro_Frec = Clasif_Filtro_Frec_mode
+          .set('code_region', param.code_region)
+          .set('version', version_output)
+          .set('descripcion', 'filtro frecuencia y moda');
+
+print(Classif_Input)
+print(Clasif_Filtro_Frec)
+
+var vis = {
+    'bands': ['clasificacion_' + param.month],
+    'min': 0,
+    'max': 17,
+    'palette': palette_0_17,
+    'format': 'png'
+};
+
+Map.addLayer(regionesclass,{},'region',false)
+Map.addLayer(mosaic.filter(ee.Filter.eq('month', param.month)).mosaic().updateMask(regionRaster), RGB, 'mosaic-'+param.month, false);
+
+  
+Map.addLayer(Classif_Input, vis, 'image-'+param.month);
+
+Map.addLayer(Clasif_Filtro_Frec, vis, 'filtered-'+param.month);
+// Map.addLayer(Clasif_Filtro_Frec_mode, vis, 'filtered-mode-'+param.month);
+
+Map.addLayer(table.style({color: 'black', fillColor:'00000000'}), {},'anp')
+
+
+Export.image.toAsset({
+    'image': Clasif_Filtro_Frec,
+    'description': prefixo_out + version_output,
+    'assetId': dirout+'/'+prefixo_out + version_output,
+    'pyramidingPolicy': {
+        '.default': 'mode'
+    },
+    'region': regionesclass.geometry().bounds(),
+    'scale': 4.7,
+    'maxPixels': 1e13
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+function Legend() {
+  
+  var legendColors = [
+          {color: palette_0_17[1], label:'c1_area_urbana y carret'},
+          {color: palette_0_17[2], label:'c2_mineria'},
+          {color: palette_0_17[3], label:'c3_agricultura'},
+          {color: palette_0_17[4], label:'c4_bosque_seco'},
+          {color: palette_0_17[5], label:'c5_bosque'},
+          {color: palette_0_17[6], label:'c6_manglar'},
+          {color: palette_0_17[7], label:'c7_bosque_plantado'},
+          {color: palette_0_17[8], label:'c8_pastizales'},
+          {color: palette_0_17[9], label:'c9_arbustal_matorral'},
+          {color: palette_0_17[10], label:'c10_poca_vegetacion'},
+          {color: palette_0_17[11], label:'c11_totoral'},
+          {color: palette_0_17[12], label:'c12_bofedal'},
+          {color: palette_0_17[13], label:'c13_areas_humedas_costeras'},
+          {color: palette_0_17[14], label:'c14_glaciar'},
+          {color: palette_0_17[15], label:'c15_Agua'},
+          {color: palette_0_17[16], label:'c16_aguas_maritima'},
+          {color: palette_0_17[17], label:'c17_sin_dato'},
+  ];
+
+  // Crear un panel para la leyenda
+  var legendPanel = ui.Panel({
+    style: {
+      position: 'bottom-left',
+      padding: '8px 15px'
+    }
+  });
+
+  // Crear un título para la leyenda
+  var legendTitle = ui.Label({
+    value: 'Leyenda general',
+    style: {fontWeight: 'bold', fontSize: '16px', margin: '0 0 4px 0'}
+  });
+
+  legendPanel.add(legendTitle);
+
+  // Crear un panel de cuadrícula para organizar en columnas
+  var gridPanel = ui.Panel({
+    layout: ui.Panel.Layout.Flow('horizontal'),
+    style: {stretch: 'horizontal'}
+  });
+
+  // Número de columnas deseadas
+  var columns = 2;
+
+  // Crear un array de columnas como paneles
+  var columnPanels = [];
+  for (var i = 0; i < columns; i++) {
+    columnPanels.push(ui.Panel({
+      layout: ui.Panel.Layout.Flow('vertical'),
+      style: {padding: '0 10px'}
+    }));
+  }
+
+  // Añadir elementos a las columnas alternando entre ellas
+  legendColors.forEach(function(item, index) {
+    var colorBox = ui.Label('', {
+      backgroundColor: item.color,
+      padding: '6px',
+      margin: '0 0 4px 0'
+    });
+
+    var description = ui.Label(item.label, {
+      margin: '0 0 4px 6px'
+    });
+
+    var legendItem = ui.Panel({
+      widgets: [colorBox, description],
+      layout: ui.Panel.Layout.Flow('horizontal')
+    });
+
+    // Añadir a la columna correspondiente
+    columnPanels[index % columns].add(legendItem);
+  });
+
+  // Añadir todas las columnas al panel de cuadrícula
+  columnPanels.forEach(function(panel) {
+    gridPanel.add(panel);
+  });
+
+  // Añadir el panel de cuadrícula a la leyenda
+  legendPanel.add(gridPanel);
+
+  return legendPanel;
+}
+
+var legend_MB = Legend();
+Map.add(legend_MB);  // Añadir la leyenda al mapa
+
+
+

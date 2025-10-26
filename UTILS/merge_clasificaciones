@@ -1,0 +1,30 @@
+var area_trabajo = ee.FeatureCollection("projects/ee-eturpocayo/assets/sernanp/AUXILIAR_DATA/limite_anp_y_za_v2")
+                      // .filter(ee.Filter.eq('Codigo_uni', region));
+           
+// var nombre_anp = area_trabajo.first().get('anp_nomb').getInfo()
+var area_trabajo_raster = ee.Image("projects/ee-eturpocayo/assets/sernanp/AUXILIAR_DATA/limite_anp_y_za_v2_raster");
+    
+var anp_clasif = ee.ImageCollection("projects/ee-anp-lineabase/assets/clasificacion-post")
+                  .filterMetadata('version', 'equals', '14')
+                  .mosaic();
+                  
+Map.addLayer(anp_clasif.randomVisualizer())
+
+Map.addLayer(area_trabajo.geometry().bounds())
+
+// EXPORTS 
+Export.image.toAsset({
+      'image': anp_clasif.byte(),
+      'description': 'ANP-clasificaciones-14',
+      'assetId': 'projects/ee-eturpocayo/assets/sernanp'+'/' +'ANP-clasificaciones-14',
+      'pyramidingPolicy': {
+          '.default': 'mode'
+      },
+      'region': area_trabajo.geometry().bounds(),
+      'scale': 4.7,
+      'maxPixels': 1e13
+  });
+  
+  
+  
+  

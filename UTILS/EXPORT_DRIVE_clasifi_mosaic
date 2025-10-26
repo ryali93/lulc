@@ -1,0 +1,79 @@
+var code_region = 114;
+
+// Carga el área de trabajo y aplica un filtro inicial por región
+var area_trabajo = ee.FeatureCollection("projects/ee-eturpocayo/assets/sernanp/AUXILIAR_DATA/limite_anp_y_za_v2")
+                      .filterMetadata("Codigo_uni","equals", code_region);
+                      
+var name_anp = area_trabajo.first().get('anp_nomb').getInfo()
+              .replace(' ','-') 
+              .replace('í','i')
+              .replace("D'","D")
+              .replace('í','i')
+              .replace(" ",'-')
+              .replace(" ",'-')
+              .replace(" ",'-')
+
+
+var area_trabajo_raster = ee.Image("projects/ee-eturpocayo/assets/sernanp/AUXILIAR_DATA/limite_anp_y_za_v2_raster")
+                            .eq(code_region).selfMask();
+    
+// Carga el mosaico de NICFI
+var nicfi = ee.ImageCollection('projects/ee-anp-lineabase/assets/mosaics');
+
+// Carga la clasificación
+var anp_clasif = ee.Image("projects/ee-anp-lineabase/assets/clasificacion-ANP-GRUPO1-v3").updateMask(area_trabajo_raster)
+
+// Paleta de colores para las clasificaciones
+var palette_0_25 = ["ffffff", "ff0000","b40b0b","ffbd08","5bdd4a","139b01","17ff7e","0f5e00","ffec13",
+                    "ceb747","f8b3ff","d72fff","00ff00","ccebc5","13f5ff","0000ff","3b8aff","d4d4d4", "ff7b06", "fff793", "a0a1af", "73ccd6",
+                    "b16d04","d2ffa1", "39ff00", "c7a9e0"];
+var vis_clas = {
+    'min': 0,
+    'max': 25,
+    'palette': palette_0_25
+};
+
+// var vis = {'bands':['N','G','B'],'min':64,'max':5454,'gamma':1.8};
+var vis = {bands: ['R', 'N', 'B'], gain: [0.2, 0.06, 0.2]}; // ANDES
+  
+Map.addLayer(anp_clasif.select('clasificacion_moda'), vis_clas, 'Clasificación - Mes6',true);
+
+
+//-----
+var meses = [
+    1,2,3,
+    4,5,6,
+    7,8,9,
+    10,11,12, 
+    'moda'
+    ];
+
+
+meses.forEach(function(mes){
+  
+  var clasif = anp_clasif.select('clasificacion_'+mes)
+  
+  // Export.image.toDrive(
+  //   {
+  //   image: clasif.byte(), 
+  //   description: name_anp + '-2023-mes' + mes, 
+  //   folder: 'CLASIFICACION_ANP_PRELIMINAR', 
+  //   region: area_trabajo.geometry(), 
+  //   scale: 4.7, 
+  //   maxPixels: 1e13
+  //   }
+  //   )
+    
+    Export.image.toDrive(
+    {
+    image: clasif.byte(), 
+    description: name_anp + '-2023-mes' + mes, 
+    folder: 'CLASIFICACION_ANP_ZA_V3', 
+    region: area_trabajo.geometry(), 
+    scale: 4.7, 
+    maxPixels: 1e13
+    }
+    )
+    
+    
+})

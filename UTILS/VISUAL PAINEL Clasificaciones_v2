@@ -1,0 +1,154 @@
+// Carga el área de trabajo y aplica un filtro inicial por región
+var area_trabajo = ee.FeatureCollection("projects/ee-eturpocayo/assets/sernanp/AUXILIAR_DATA/limite_anp_y_za_v2");
+var area_trabajo_raster = ee.Image("projects/ee-eturpocayo/assets/sernanp/AUXILIAR_DATA/limite_anp_y_za_v2_raster");
+    
+// Carga el mosaico de NICFI
+var nicfi = ee.ImageCollection('projects/ee-anp-lineabase/assets/mosaics');
+
+// Carga la clasificación
+var anp_clasif = ee.Image("projects/ee-anp-lineabase/assets/clasificacion-ANP-GRUPO1-v2")
+
+// Paleta de colores para las clasificaciones
+var palette_0_24 = ["ffffff", "ff0000","b40b0b","ffbd08","5bdd4a","139b01","17ff7e","0f5e00","ffec13",
+                    "ceb747","f8b3ff","d72fff","00ff00","ccebc5","13f5ff","0000ff","3b8aff","d4d4d4", "ff7b06", "fff793", "a0a1af", "73ccd6",
+                    "b16d04","d2ffa1", "39ff00"];
+
+
+var vis_clas = {
+    'min': 0,
+    'max': 24,
+    'palette': palette_0_24
+};
+
+// var vis = {'bands':['N','G','B'],'min':64,'max':5454,'gamma':1.8};
+var vis = {bands: ['R', 'N', 'B'], gain: [0.2, 0.06, 0.2]}; // ANDES
+
+// Inicialización de mapas
+var maps = [], map, mosaic, mosaic2;
+
+// Crear 12 mapas (uno por cada mes)
+for (var i = 0; i < 12; i++) {
+    map = ui.Map();
+    maps.push(map);
+}
+
+// Crear un linker para sincronizar los mapas
+var linker = ui.Map.Linker(maps);
+
+// Crear un título dinámico
+var title = ui.Label('', {
+    stretch: 'horizontal',
+    textAlign: 'center',
+    fontWeight: 'bold',
+    fontSize: '18px'
+});
+
+// Crear una grilla para organizar los mapas
+var mapGrid = ui.Panel([
+    ui.Panel([maps[0], maps[1], maps[2], maps[3]],
+            ui.Panel.Layout.Flow('horizontal'), {stretch: 'both'}),
+    ui.Panel([maps[4], maps[5], maps[6], maps[7]],
+            ui.Panel.Layout.Flow('horizontal'), {stretch: 'both'}),
+    ui.Panel([maps[8], maps[9], maps[10], maps[11]],
+            ui.Panel.Layout.Flow('horizontal'), {stretch: 'both'})
+  ],
+  ui.Panel.Layout.Flow('vertical'),
+  {stretch: 'both'}
+);
+
+// Agregar el título y la grilla al root
+ui.root.widgets().reset([mapGrid]);
+ui.root.setLayout(ui.Panel.Layout.Flow('horizontal'));
+
+// Crear el selector de ANP
+var anpNames = area_trabajo.aggregate_array('anp_nomb').getInfo();
+
+var anpSelector = ui.Select({
+  items: anpNames,
+  placeholder: 'Selecciona un ANP',
+  onChange: function(selectedAnp) {
+    updateMaps(selectedAnp); // Llama a una función para actualizar los mapas
+  }
+});
+
+var anpLabel = ui.Label('Selecciona un ANP:');
+
+// Función para crear la leyenda
+function Legend() {
+ var legendColors = [
+          {color: palette_0_24[1], label:'c1_area_urbana y carret'},
+          {color: palette_0_24[2], label:'c2_mineria'},
+          {color: palette_0_24[3], label:'c3_agricultura'},
+          {color: palette_0_24[4], label:'c4_bosque_seco'},
+          {color: palette_0_24[5], label:'c5_bosque'},
+          {color: palette_0_24[6], label:'c6_manglar'},
+          {color: palette_0_24[7], label:'c7_bosque_plantado'},
+          {color: palette_0_24[8], label:'c8_pastizales'},
+          {color: palette_0_24[9], label:'c9_arbustal_matorral'},
+          {color: palette_0_24[10], label:'c10_poca_vegetacion'},
+          {color: palette_0_24[11], label:'c11_totoral'},
+          {color: palette_0_24[12], label:'c12_bofedal'},
+          {color: palette_0_24[13], label:'c13_areas_humedas_costeras'},
+          {color: palette_0_24[14], label:'c14_glaciar'},
+          {color: palette_0_24[15], label:'c15_Agua'},
+          {color: palette_0_24[16], label:'c16_aguas_maritima'},
+          {color: palette_0_24[17], label:'c17_sin_dato'},
+          {color: palette_0_24[18], label:'c18_Acuicultura'},
+          {color: palette_0_24[19], label:'c19_Hipersalina'},
+          {color: palette_0_24[20], label:'c20_Banco_arena'},
+          {color: palette_0_24[21], label:'c21_Tillandsial'},
+          {color: palette_0_24[22], label:'c22_Cultivos transitorios'},
+          {color: palette_0_24[23], label:'c23_Cultivos permanentes'},
+          {color: palette_0_24[24], label:'c24_Lomas_Costero'}
+  ];
+
+  var legendPanel = ui.Panel({style: {padding: '8px', position: 'top-left'}});
+  var legendTitle = ui.Label('Leyenda', {fontWeight: 'bold', fontSize: '16px'});
+  legendPanel.add(legendTitle);
+
+  legendColors.forEach(function(item) {
+    var colorBox = ui.Label('', {backgroundColor: item.color, padding: '10px', margin: '2px'});
+    var label = ui.Label(item.label, {margin: '0 0 0 6px'});
+    var legendItem = ui.Panel([colorBox, label], ui.Panel.Layout.Flow('horizontal'));
+    legendPanel.add(legendItem);
+  });
+
+  return legendPanel;
+}
+
+var legendPanel = Legend();
+
+// Panel combinado de selector y leyenda
+var sidePanel = ui.Panel({
+  widgets: [ui.Panel([title, anpLabel, anpSelector]), legendPanel],
+  style: {position: 'top-left', padding: '10px'}
+});
+
+// Agregar el panel lateral a la interfaz
+ui.root.insert(0, sidePanel);
+
+// Función para actualizar los mapas
+function updateMaps(selectedAnp) {
+    var selectedArea = area_trabajo.filter(ee.Filter.eq('anp_nomb', selectedAnp));
+    var Codigo_uni = selectedArea.first().get('Codigo_uni').getInfo();
+    
+    var selectedRaster = area_trabajo_raster.eq(Codigo_uni);
+    var nombreAnp = selectedArea.first().get('anp_nomb').getInfo();
+
+    for (var i = 0; i < 12; i++) {
+        mosaic = nicfi.filterMetadata('month', 'equals', i + 1).mosaic().updateMask(selectedRaster);
+        mosaic2 = mosaic.updateMask(mosaic.select('B').lte(1600));
+        
+        maps[i].layers().reset();
+        maps[i].addLayer(mosaic2, vis, 'Mosaico PLANET - Mes ' + (i + 1), false);
+        maps[i].addLayer(anp_clasif.select('clasificacion_' + (i + 1)).updateMask(selectedRaster), vis_clas, 'Clasificación - Mes ' + (i + 1),true);
+        maps[i].centerObject(selectedArea, 9);
+    }
+
+    title.setValue('Mosaics y clasificaciones - ANP');
+}
+
+if (anpNames.length > 0) {
+    anpSelector.setValue(anpNames[0]);
+    updateMaps(anpNames[0]);
+}

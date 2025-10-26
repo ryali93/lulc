@@ -1,0 +1,89 @@
+var region = 101;
+var cloud_Blue_thr = 1600  //NO ENMASCAR : 10000, ENMASCAR: 1600;
+
+var area_trabajo = ee.FeatureCollection("projects/ee-eturpocayo/assets/sernanp/AUXILIAR_DATA/limite_anp_y_za_v2")
+                      .filter(ee.Filter.eq('Codigo_uni', region));
+
+var area_trabajo_raster = ee.Image("projects/ee-eturpocayo/assets/sernanp/AUXILIAR_DATA/limite_anp_y_za_v2_raster")//.eq(region);
+    
+var nicfi = ee.ImageCollection('projects/ee-anp-lineabase/assets/mosaics')
+
+var Mapbiomas = ee.Image('projects/mapbiomas-public/assets/peru/collection2/mapbiomas_peru_collection2_integration_v1')
+                                          .select('classification_2021')
+                                          
+// var vis = {'bands':['R', 'N', 'B'],'min':64,'max':5454,'gamma':1.8};
+var vis = {bands: ['R', 'N', 'B'], gain: [0.2, 0.06, 0.2]}; // ANDES
+// var vis = {bands: ['N', 'G', 'B'], min:630, max:2950}; //COSTA
+
+var maps = [],
+    map,
+    mosaic,
+    cloud,
+    mosaic2;
+
+for (var i = 1; i < 13; i++) {
+  
+    mosaic = nicfi.filterMetadata('month', 'equals', i).mosaic().updateMask(area_trabajo_raster);
+    // using threshold value (0.1600) of blue reflectance to make cloud mask
+    mosaic2 = mosaic.updateMask(mosaic.select('B').lte(cloud_Blue_thr).or(Mapbiomas.eq(34)))
+
+    map = ui.Map();
+
+    map.add(ui.Label(String(i), {
+        'position': 'bottom-left',
+        'fontWeight': 'bold'
+    }));
+
+    map.addLayer(mosaic, vis, 'month'+1, false);
+    map.addLayer(mosaic2, vis, 'month_cloud_free'+1, true);
+
+    map.centerObject(area_trabajo,9)
+/*    map.addLayer(grid, {
+            'palette': 'cccccc',
+            'opacity': 0.6
+        },
+        'Cartas'
+    );*/
+
+    maps.push(map);
+}
+
+// blank map
+maps.push(ui.Map());
+
+var linker = ui.Map.Linker(maps);
+
+// Create a title.
+var title = ui.Label('Mosaics planet ANPs', {
+    stretch: 'horizontal',
+    textAlign: 'center',
+    fontWeight: 'bold',
+    fontSize: '24px',
+
+});
+
+// Create a grid of maps.
+var mapGrid = ui.Panel([
+    ui.Panel([maps[0], maps[1], maps[2], maps[3]],
+            ui.Panel.Layout.Flow('horizontal'), {
+                stretch: 'both'
+            }),
+    ui.Panel([maps[4], maps[5], maps[6], maps[7]],
+            ui.Panel.Layout.Flow('horizontal'), {
+                stretch: 'both'
+            }),
+    ui.Panel([maps[8], maps[9], maps[10], maps[11]],
+            ui.Panel.Layout.Flow('horizontal'), {
+                stretch: 'both'
+            }),
+  ],
+    ui.Panel.Layout.Flow('vertical'), {
+        stretch: 'both'
+    }
+);
+
+// Add the maps and title to the ui.root.
+ui.root.widgets().reset([title, mapGrid]);
+ui.root.setLayout(ui.Panel.Layout.Flow('vertical'));
+
+// maps[0].centerObject(area_trabajo,9);

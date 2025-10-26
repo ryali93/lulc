@@ -1,0 +1,579 @@
+var numPoints = 3650;
+var version_export = '1';
+var name = 'Titicaca';
+
+var id_anp = 'ANP_107'; 
+var randomPoints = ee.FeatureCollection("projects/ee-anp-lineabase/assets/AUXILIAR-DATA/random_points/ANP_107_Titicaca_3650");
+
+// map ref
+var Mapbiomas = ee.Image('projects/mapbiomas-public/assets/peru/collection2/mapbiomas_peru_collection2_integration_v1')
+                  .select('classification_2021');
+                  
+var WorldCover = ee.ImageCollection('ESA/WorldCover/v200').first();
+
+// print(randomPoints)
+Map.addLayer(randomPoints)
+// Função para gerar o mosaico Sentinel mediano para um determinado mês e ano
+function getSentinel2(year, month) {
+  var startDate = ee.Date.fromYMD(year, month, 1);
+  var endDate = startDate.advance(1, 'month');
+  var collection = ee.ImageCollection('COPERNICUS/S2_SR')
+    .filterBounds(randomPoints)
+    .filterDate(startDate, endDate)
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 70))
+    .median();
+  return collection;
+}
+
+
+// // Função para gerar o mosaico Planet para um determinado mês e ano
+// function getPlanetMosaic(year, month) {
+//   var startDate = ee.Date.fromYMD(year, month, 1);
+//   var endDate = startDate.advance(1, 'month');
+//   var collection = ee.ImageCollection('projects/planet-nicfi/assets/basemaps/americas')
+//     .filterBounds(randomPoints)
+//     .filterDate(startDate, endDate)
+//     .first();
+//   return collection;
+// }
+
+// Função para gerar o mosaico Planet para um determinado mês e ano
+function getPlanetMosaic(year, month) {
+  var startDate = ee.Date.fromYMD(year, month, 1);
+  var endDate = startDate.advance(1, 'month');
+  var collection = ee.ImageCollection('projects/ee-anp-lineabase/assets/mosaics')
+    // .filterBounds(randomPoints)
+    .filter(ee.Filter.eq('month', month))
+    // .filterDate(startDate, endDate)
+    .mosaic();
+  return collection;
+}
+
+// Interface interativa para seleção de ano e ponto
+var yearSelect = ui.Select({
+  items: ['2023'],
+  value: '2023',
+  onChange: updateMap
+});
+
+// Textbox para selecionar o ponto
+var pointTextbox = ui.Textbox({
+  value: '0',
+  onChange: function(value) {
+    var pointIndex = parseInt(value, 10);
+    if (isNaN(pointIndex) || pointIndex < 0 || pointIndex >= numPoints) {
+      pointIndex = 0; // Reset to 0 if input is invalid
+    }
+    pointTextbox.setValue(pointIndex.toString(), false); // Update textbox with valid index
+    clearCheckboxes();
+    updateMap();
+  }
+});
+
+// Botões para incrementar e decrementar o índice de ponto
+var incrementButton = ui.Button({
+  label: '>',
+  onClick: function() {
+    var pointIndex = parseInt(pointTextbox.getValue(), 10);
+    if (pointIndex < numPoints - 1) {
+      pointIndex++;
+      pointTextbox.setValue(pointIndex.toString(), true);
+    }
+  }
+});
+
+var decrementButton = ui.Button({
+  label: '<',
+  onClick: function() {
+    var pointIndex = parseInt(pointTextbox.getValue(), 10);
+    if (pointIndex > 0) {
+      pointIndex--;
+      pointTextbox.setValue(pointIndex.toString(), true);
+    }
+  }
+});
+
+// Painel para as setas e textbox de seleção de ponto
+var pointControlPanel = ui.Panel({
+  widgets: [decrementButton, pointTextbox, incrementButton],
+  layout: ui.Panel.Layout.Flow('horizontal')
+});
+
+// Interface para seleção de valores de 12 propriedades usando Checkboxes
+var propertyPanels = [];
+for (var i = 1; i <= 12; i++) {
+  var propIndex = i;
+  var checkboxes = [];
+  var values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+  values.forEach(function(value) {
+    var checkbox = ui.Checkbox(value.toString(), false);
+    checkbox.onChange(function(checked) {
+      if (checked) {
+        // Desmarcar outros checkboxes no mesmo grupo
+        checkboxes.forEach(function(cb) {
+          if (cb !== checkbox) cb.setValue(false, false);
+        });
+      }
+    });
+    checkboxes.push(checkbox);
+  });
+
+  var propertyPanel = ui.Panel([
+    ui.Label('Mes ' + propIndex + ':'),
+    checkboxes[0], checkboxes[1], checkboxes[2], checkboxes[3], checkboxes[4], checkboxes[5], checkboxes[6], checkboxes[7], checkboxes[8], checkboxes[9], checkboxes[10],
+    checkboxes[11], checkboxes[12], checkboxes[13], checkboxes[14], checkboxes[15], checkboxes[16]
+  ], ui.Panel.Layout.Flow('horizontal'));
+  
+  propertyPanels.push(propertyPanel);
+}
+
+var propertyContainer = ui.Panel(propertyPanels, ui.Panel.Layout.Flow('vertical'));
+var assignPropsButton = ui.Button({
+  label: 'Assign properties',
+  onClick: assignProperties
+});
+
+// Botão para exportar a FeatureCollection para um asset
+var exportButton = ui.Button({
+  label: 'Export to Asset',
+  onClick: function() {
+    print('FeatureCollection Export Final:', name,randomPoints.filter(ee.Filter.gte("mes1", 1)));
+    Export.table.toAsset({
+      collection: randomPoints.filter(ee.Filter.gte("mes1", 1)),
+      description: 'RandomPointsExport-' + name + '-' + version_export,
+      assetId: 'projects/ee-anp-lineabase/assets/training_data/'+ id_anp + '/RandomPoints_' + name + '-' + version_export
+    });
+  }
+});
+
+
+// ------ start LEYENDA-------------------------------------------------------------------------
+    // Crear panel de leyenda
+    var legendPanel = ui.Panel({
+      style: {
+        position: 'top-left',
+        padding: '8px',
+        backgroundColor: 'white'
+      }
+    });
+    
+    // Título de la leyenda
+    var legendTitle = ui.Label({
+      value: 'Leyenda:',
+      style: {fontWeight: 'bold', fontSize: '16px', margin: '0 0 4px 0'}
+    });
+    legendPanel.add(legendTitle);
+    var legendItems = [
+        '1 :  Zonas urbanizadas',
+        '2 :  Zonas de extracción minera y escombreras',
+        '3 :  SUPERFICIES AGRÍCOLAS',
+        '4 :  Bosque seco',
+        '5 :  Bosque',
+        '6 :  Manglar',
+        '7 :  Bosque Plantado',
+        '8 :  Pastizales',
+        '9 :  Arbustal o matorral',
+        '10 : Áreas abiertas, sin o con poca vegetación',
+        '11 :  Totoral',
+        '12 :  Bofedal',
+        '13 :  Áreas húmedas costeras',
+        '14 :  Glaciar',
+        '15 :  Lago, Lagunas y rios',
+        '16 :  Aguas marítimas',
+        '17 :  SIN DATOS',
+    ];
+    
+    // Añadir cada elemento de la leyenda al panel
+    legendItems.forEach(function(item) {
+      var legendItem = ui.Label({
+        value: item,
+        style: {fontSize: '14px', margin: '0 0 4px 0'}
+      });
+      legendPanel.add(legendItem);
+    });
+// --------------------------------------------------------------------------------------------
+
+
+// Interface principal
+var mainPanel = ui.Panel([
+  ui.Label('Seleccione Punto:'),
+  pointControlPanel, 
+  // ui.Label('Seleccione Año:'),
+  // yearSelect, 
+  ui.Label('Seleccione clase a la que corresponde:'),
+  propertyContainer, 
+  ui.Panel([assignPropsButton, exportButton], ui.Panel.Layout.Flow('horizontal')),
+  ui.Panel(legendPanel)
+]);
+
+
+
+// ui.root.add(mainPanel);
+
+// Função para atribuir os valores selecionados das propriedades ao ponto selecionado
+function assignProperties() {
+  var pointIndex = parseInt(pointTextbox.getValue());
+  
+  var properties = {};
+  propertyPanels.forEach(function(panel, index) {
+    var value = null;
+    // Iterar sobre checkboxes para encontrar o selecionado
+    for (var j = 0; j < 17; j++) {
+      var checkbox = panel.widgets().get(j + 1); // +1 because the first widget is the label
+      if (checkbox.getValue()) {
+        value = parseInt(checkbox.getLabel()); // Acessa o label corretamente
+        break;
+      }
+    }
+    properties['mes' + (index + 1)] = value;
+  });
+
+  randomPoints = ee.FeatureCollection(randomPoints.toList(numPoints).map(function(feature) {
+    var index = ee.Number(ee.List(randomPoints.toList(numPoints)).indexOf(feature));
+    return ee.Feature(ee.Algorithms.If(index.eq(pointIndex),
+                            ee.Feature(feature).set(properties),
+                            feature));
+  }));
+
+  //print('Propriedades atribuídas ao ponto ' + pointIndex + ': ', properties);
+  // print(randomPoints.filter(ee.Filter.gte("mes12", 1)));
+  print(randomPoints.filter(ee.Filter.gte("mes12", 1)).size());
+
+  // updateMap(); // Atualizar a visualização após atribuir as propriedades
+}
+
+
+// Função para limpar as seleções de checkboxes
+function clearCheckboxes() {
+  propertyPanels.forEach(function(panel) {
+    panel.widgets().forEach(function(widget) {
+      if (widget instanceof ui.Checkbox) {
+        widget.setValue(false, false);
+      }
+    });
+  });
+}
+
+
+// Function for stretch visualization
+function visual(map, image, geometry, bands, scale, stretch, name, show){
+  typeof scale == 'undefined' ? scale = 100 : null;
+  typeof stretch == 'undefined' ? stretch = [2, 98] : null;
+  typeof name == 'undefined' ? name = 'Layer ' + Map.layers().length() : null;
+  typeof show == 'undefined' ? show = true : null;
+  
+  var minMax = image.select(bands).reduceRegion({
+    reducer: ee.Reducer.percentile(stretch),
+    scale: scale,
+    geometry: geometry,
+    bestEffort: true
+  });
+  
+  var scaled = ee.Image(bands.map(function(band){
+    var imageBand = image.select(band);
+    var min = ee.Number(minMax.get(band + '_p' + Math.round(stretch[0])));
+    var max = ee.Number(minMax.get(band + '_p' + Math.round(stretch[1])));
+    
+    return imageBand.unitScale(min, max).rename(band);
+  }));
+  map.addLayer(scaled, { min: 0, max: 1, bands: bands}, name, show);
+}
+
+
+//---------------------------------
+
+  var maps = [];
+  // var year = 2023
+  var year = parseInt(yearSelect.getValue());
+  // Crear 12 mapas, uno para cada mes
+  for (var monthI = 1; monthI <= 12; monthI++) {
+      var Planet_mosaic = getPlanetMosaic(year, monthI);
+      var S2_mosaic = getSentinel2(year, monthI);
+      var map = ui.Map();
+      map.layers().reset();
+
+      if(monthI == 1){
+            map.setOptions('SATELLITE'); // Opcional: cambia la vista base de los mapas
+      }
+      visual(map,Planet_mosaic, randomPoints.geometry().bounds(), ['R', 'N', 'B'], 5, [2, 98],'Planet-' + year + '-Mes' + monthI +'s', true);
+      map.add(ui.Label(String('mes '+ monthI), {
+        'position': 'bottom-right',
+        'fontWeight': 'bold'
+        }));
+    
+      map.addLayer(Planet_mosaic,
+        {bands: ['R', 'N', 'B'], min: 200, max: 3000, gamma: 1.4},
+        'Planet-' + year + '-Mes' + monthI, false
+      );
+      map.addLayer(S2_mosaic, 
+        {bands: ['B11', 'B8', 'B4'], min: 1000, max: 4500, gamma: 1.0},
+        'Sentinel-' + year + '-Mes' + monthI, false);
+
+      map.addLayer(randomPoints, {color: 'red'}, 'Random Points');
+      // map.addLayer(randomPoints, {color: 'black'}, 'Random Points');
+
+      maps.push(map);
+    }
+  // Create a linker to synchronize maps
+  var linker = ui.Map.Linker(maps);
+  maps[0].setOptions('SATELLITE'); // Opcional: cambia la vista base de los mapas
+
+  // maps[0].centerObject(pointFeature.geometry(), 17); // Centra el mapa en el área de interés
+
+//   // Crear la etiqueta
+//   var bottomLabel = ui.Label(text.getInfo(), {
+//     fontSize: '12px',
+//     textAlign: 'left',
+//     padding: '0px'  // Sin padding para eliminar el cuadro de fondo
+//   });
+
+// // Crear un panel en la parte inferior
+//   var bottomPanel = ui.Panel({
+//     widgets: [bottomLabel],
+//     layout: ui.Panel.Layout.Flow('horizontal'),  // Alineación horizontal en caso de más widgets
+//     style: {
+//       position: 'bottom-left',                 // Ubicación en la parte inferior central
+//       padding: '0px',
+//       backgroundColor: 'white'
+//     }
+//   });
+  
+  
+//   maps[0].add(bottomPanel);
+
+  // Create a grid of maps.
+  var mapGrid = ui.Panel([
+    ui.Panel([maps[0], maps[1], maps[2], maps[3]],
+            ui.Panel.Layout.Flow('horizontal'), {
+                stretch: 'both'
+            }),
+    ui.Panel([maps[4], maps[5], maps[6], maps[7]],
+            ui.Panel.Layout.Flow('horizontal'), {
+                stretch: 'both'
+            }),
+    ui.Panel([maps[8], maps[9], maps[10], maps[11]],
+            ui.Panel.Layout.Flow('horizontal'), {
+                stretch: 'both'
+            }),
+       ],
+    ui.Panel.Layout.Flow('vertical'), {
+        stretch: 'both'
+    }
+      );
+ui.root.clear()
+ui.root.add(mapGrid);
+ui.root.add(mainPanel);
+// --------------
+
+
+//----------------------------------------------------------------------------------------
+// // MAP ON CLICK
+    // Crear un panel para mostrar los valores del inspector
+    // var inspectorPanel = ui.Panel({
+    //   style: {width: '150px', padding: '1px', backgroundColor: '#f0f0f0'}
+    // });
+
+    // Mapeo de clases Mapbiomas
+    var mapbiomasClasses = {
+      3: 'Bosque',
+      4: 'Bosque seco',
+      5: 'Manglar',
+      6: 'Bosque inundable',
+      9: 'Plantación forestal',
+      11: 'Zona pantanosa o pastizal inundable',
+      12: 'Pastizal / herbazal',
+      13: 'Matorral y otras formaciones no boscosas',
+      15: 'Pasto',
+      18: 'Agricultura',
+      21: 'Mosaico agropecuario',
+      24: 'Infraestructura',
+      25: 'Otra área sin vegetación',
+      27: 'No observado',
+      30: 'Minería',
+      31: 'Acuicultura',
+      32: 'Salina',
+      33: 'Río, lago u océano',
+      34: 'Glaciar',
+      35: 'Palma aceitera'
+    };
+    
+    // Mapeo de clases WorldCover
+    var worldCoverClasses = {
+      10: 'Bosque',
+      20: 'Matorrales',
+      30: 'Pastizales',
+      40: 'Tierras de cultivo',
+      50: 'Construcciones',
+      60: 'Escasa vegetación',
+      70: 'Nieve y hielo',
+      80: 'Cuerpos de agua permanentes',
+      90: 'Humedales herbáceos',
+      95: 'Manglares',
+      100: 'Musgo y líquenes'
+    };
+
+/*
+ * Función para crear el inspector en los mapas 1 y 2
+ */
+function addInspector(map, mapName) {
+      var inspectorPanel = ui.Panel({
+      style: {width: '150px', padding: '1px', backgroundColor: '#f0f0f0'}
+    });
+  map.onClick(function(coords) {
+    inspectorPanel.clear();
+    inspectorPanel.add(ui.Label('Inspector - ' + mapName, {fontWeight: 'bold', fontSize: '10px'}));
+
+    var point = ee.Geometry.Point([coords.lon, coords.lat]);
+
+    // Extraer los valores de las capas en la ubicación seleccionada
+    var mapbiomasValue = Mapbiomas.reduceRegion({
+      reducer: ee.Reducer.first(),
+      geometry: point,
+      scale: 30
+    }).get('classification_2021');
+    
+    var worldCoverValue = WorldCover.reduceRegion({
+      reducer: ee.Reducer.first(),
+      geometry: point,
+      scale: 10
+    }).get('Map');
+
+    mapbiomasValue.evaluate(function(result) {
+      var mapbiomasClassName = result ? mapbiomasClasses[result] : 'Sin datos';
+      inspectorPanel.add(ui.Label('Mapbiomas 2021: ' + (mapbiomasClassName ? mapbiomasClassName : 'Sin datos'), {fontSize: '10px'}));
+    });
+
+    worldCoverValue.evaluate(function(result) {
+      var worldCoverClassName = result ? worldCoverClasses[result] : 'Sin datos';
+      inspectorPanel.add(ui.Label('WorldCover 2021: ' + (worldCoverClassName ? worldCoverClassName : 'Sin datos'), {fontSize: '10px'}));
+    });
+  });
+
+  map.add(inspectorPanel)
+}
+  
+  // Añadir inspector al mapa 1 (Mapbiomas)
+  addInspector(maps[0], 'click');
+  // addInspector(maps[1], 'click2');
+  
+//----------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+// Crear un panel en la parte inferior
+  var bottomPanel = ui.Panel({
+    // widgets: [bottomLabel],
+    // layout: ui.Panel.Layout.Flow('horizontal'),  // Alineación horizontal en caso de más widgets
+    style: {
+      position: 'bottom-left',                 // Ubicación en la parte inferior central
+      padding: '0px',
+      backgroundColor: 'white'
+    }
+  });
+
+
+
+// Função para atualizar o mapa
+function updateMap() {
+  
+  var year = parseInt(yearSelect.getValue());
+  var pointIndex = parseInt(pointTextbox.getValue());
+  var point = randomPoints.toList(numPoints).get(pointIndex);
+  var pointFeature = ee.Feature(point); 
+
+  var boundPoint = pointFeature.buffer(30*30/2).bounds();
+  var text = pointFeature.get('ID')
+  maps[0].centerObject(pointFeature, 17);
+  
+  
+  var layerName = 'point sel';
+  maps[11].layers().forEach(function(layer) {
+    if (layer.getName() === layerName) {
+      maps[11].layers().remove(layer);
+    }
+  });
+  
+  maps[11].addLayer(pointFeature, {color: 'yellow'}, 'point sel');
+
+  // var maps = [];
+  // // Crear 12 mapas, uno para cada mes
+  // for (var monthI = 1; monthI <= 12; monthI++) {
+  //     var Planet_mosaic = getPlanetMosaic(year, monthI);
+  //     var S2_mosaic = getSentinel2(year, monthI);
+  //     var map = ui.Map();
+  //     map.layers().reset();
+  //     // map.setOptions('SATELLITE'); // Opcional: cambia la vista base de los mapas
+  //     if(monthI == 12){
+  //     map.centerObject(pointFeature.geometry(), 17); // Centra el mapa en el área de interés
+  //     }
+  //     visual(map,Planet_mosaic.clip(boundPoint), boundPoint.geometry(), ['R', 'N', 'B'], 5, [2, 98],'Mosaic-median-stretch', true);
+      
+  //     map.addLayer(Planet_mosaic.clip(boundPoint),
+  //       {bands: ['R', 'N', 'B'], min: 200, max: 3000, gamma: 1.4},
+  //       'Planet-' + year + ' - Mes ' + monthI, false
+  //     );
+  //     map.addLayer(S2_mosaic.clip(boundPoint), 
+  //       {bands: ['B11', 'B8', 'B4'], min: 1000, max: 4500, gamma: 1.0},
+  //       'Sentinel-' + year + ' - Mes ' + monthI, false);
+
+  //     map.addLayer(pointFeature, {color: 'red'}, 'Random Points');
+  //     // map.addLayer(randomPoints, {color: 'black'}, 'Random Points');
+
+  //     maps.push(map);
+  //   }
+  // // Create a linker to synchronize maps
+  // var linker = ui.Map.Linker(maps);
+  // maps[0].setOptions('SATELLITE'); // Opcional: cambia la vista base de los mapas
+  
+  // maps[0].centerObject(pointFeature.geometry(), 17); // Centra el mapa en el área de interés
+  
+  
+  // Crear la etiqueta
+  var bottomLabel = ui.Label(text.getInfo(), {
+    fontSize: '12px',
+    textAlign: 'left',
+    padding: '0px'  // Sin padding para eliminar el cuadro de fondo
+  });
+
+  bottomPanel.clear()
+  bottomPanel.add(bottomLabel);
+  
+  // Remover o painel se já existir
+  if (maps[0].widgets().contains(bottomPanel)) {
+    maps[0].remove(bottomPanel);
+  }
+  maps[0].add(bottomPanel);
+
+//   // Create a grid of maps.
+//   var mapGrid = ui.Panel([
+//     ui.Panel([maps[0], maps[1], maps[2], maps[3]],
+//             ui.Panel.Layout.Flow('horizontal'), {
+//                 stretch: 'both'
+//             }),
+//     ui.Panel([maps[4], maps[5], maps[6], maps[7]],
+//             ui.Panel.Layout.Flow('horizontal'), {
+//                 stretch: 'both'
+//             }),
+//     ui.Panel([maps[8], maps[9], maps[10], maps[11]],
+//             ui.Panel.Layout.Flow('horizontal'), {
+//                 stretch: 'both'
+//             }),
+//       ],
+//     ui.Panel.Layout.Flow('vertical'), {
+//         stretch: 'both'
+//     }
+//       );
+
+// ui.root.clear()
+// ui.root.add(mapGrid);
+// ui.root.add(mainPanel);
+}
+
+updateMap();
