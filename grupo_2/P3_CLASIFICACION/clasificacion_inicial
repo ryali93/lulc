@@ -1,0 +1,169 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var c01_area_urbana = /* color: #98ff00 */ee.FeatureCollection(
+        [ee.Feature(
+            ee.Geometry.Point([-76.0578138421443, -10.923508435499535]),
+            {
+              "clase": 1,
+              "system:index": "0"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([-76.14750413471005, -11.085436413352955]),
+            {
+              "clase": 1,
+              "system:index": "1"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([-76.2366534799535, -10.837137038544624]),
+            {
+              "clase": 1,
+              "system:index": "2"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([-76.00036974806994, -11.06482453551932]),
+            {
+              "clase": 1,
+              "system:index": "3"
+            })]),
+    c15_agua = /* color: #ffff99 */ee.FeatureCollection(
+        [ee.Feature(
+            ee.Geometry.Point([-76.14885641894195, -11.004486408140563]),
+            {
+              "clase": 15,
+              "system:index": "0"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([-76.06578915916033, -11.00361679608864]),
+            {
+              "clase": 15,
+              "system:index": "1"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([-76.10595792136736, -10.978087122035655]),
+            {
+              "clase": 15,
+              "system:index": "2"
+            })]),
+    c12_bofedal = /* color: #0f9522 */ee.FeatureCollection(
+        [ee.Feature(
+            ee.Geometry.Point([-76.11247447471358, -10.970135607425492]),
+            {
+              "clase": 12,
+              "system:index": "0"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([-76.19841144796715, -10.890543740164189]),
+            {
+              "clase": 12,
+              "system:index": "1"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([-75.98770972151965, -11.071394803831305]),
+            {
+              "clase": 12,
+              "system:index": "2"
+            })]),
+    c08_pastizal = /* color: #0000ff */ee.FeatureCollection(
+        [ee.Feature(
+            ee.Geometry.Point([-76.16187157251838, -11.069862237690154]),
+            {
+              "clase": 8,
+              "system:index": "0"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([-75.95125320971178, -11.061931734736007]),
+            {
+              "clase": 8,
+              "system:index": "1"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([-75.95040704994513, -11.062890011340942]),
+            {
+              "clase": 8,
+              "system:index": "2"
+            })]),
+    c02_mineria = /* color: #0b4a8b */ee.FeatureCollection(
+        [ee.Feature(
+            ee.Geometry.Point([-76.24991527657411, -10.825572071184551]),
+            {
+              "clase": 2,
+              "system:index": "0"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([-76.26721535012905, -10.860614150801112]),
+            {
+              "clase": 2,
+              "system:index": "1"
+            })]),
+    c03_agricultura = /* color: #d63000 */ee.FeatureCollection([]),
+    c04_bosque_seco = /* color: #00ffff */ee.FeatureCollection([]),
+    c05_bosque = /* color: #bf04c2 */ee.FeatureCollection([]),
+    c06_manglar = /* color: #ff0000 */ee.FeatureCollection([]),
+    c07_bosque_plantado = /* color: #00ff00 */ee.FeatureCollection([]),
+    c09_arbustal_matorral = /* color: #999900 */ee.FeatureCollection([]),
+    c10_poca_vegetacion = /* color: #009999 */ee.FeatureCollection([]),
+    c11_totoral = /* color: #ff00ff */ee.FeatureCollection([]),
+    c13_areas_humedas_costeras = /* color: #99ff99 */ee.FeatureCollection([]),
+    c14_glaciar = /* color: #9999ff */ee.FeatureCollection([]),
+    c16_agua_maritima = /* color: #99ffff */ee.FeatureCollection([]),
+    c17_sin_dato = /* color: #ff99ff */ee.FeatureCollection([]);
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var palettes = require('users/gena/packages:palettes');
+var utils    = require('users/ryali93/lulc:UTILES/utils.js');
+
+var samples = ee.FeatureCollection([
+                  c01_area_urbana,
+                  c02_mineria,
+                  c03_agricultura,
+                  c04_bosque_seco,
+                  c05_bosque,
+                  c06_manglar,
+                  c07_bosque_plantado,
+                  c08_pastizal,
+                  c09_arbustal_matorral,
+                  c10_poca_vegetacion,
+                  c11_totoral,
+                  c12_bofedal,
+                  c13_areas_humedas_costeras,
+                  c14_glaciar,
+                  c15_agua,
+                  c16_agua_maritima,
+                  c17_sin_dato
+                  ]).flatten();
+print(samples)
+// Definir las colecciones y variables necesarias
+var version = '1'
+var year = 2023
+var month = 4
+var anp_cod = 'RN02'
+var cloud_blue_thr = 30
+
+var palette_1_17       = ["ffffff", "ff0000","b40b0b","ffbd08","5bdd4a","139b01","17ff7e","0f5e00","ffec13","ceb747","f8b3ff","d72fff","00ff00","ccebc5","13f5ff","0000ff","3b8aff","d4d4d4"];
+var remap_MB = {
+    from: [3, 4, 5, 6, 9, 11, 12, 13, 15, 18, 21, 24, 25, 30, 31, 32, 33, 34],
+    to:   [5, 4, 6, 5, 7, 12,  8,  9,  8,  3,  3,  1, 10,  2, 15, 10, 15, 14]
+}
+var remap_WC = {
+    from: [10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100],
+    to:   [ 7,  9,  8,  3,  1, 10, 14, 15, 12,  6,  17]
+}
+
+var base        = utils.loadBaseData('RN02');
+var planet      = utils.getMonthlyPlanet(2023, 3, base.anp_za.geometry(), 30);
+var mbc3        = utils.loadMapBiomas2023(base.anp_za.geometry()).remap(remap_MB.from, remap_MB.to);
+var wc          = utils.loadWorldCover2021(base.anp_za.geometry()).remap(remap_WC.from, remap_WC.to);
+var topography  = utils.loadSlopeElevation(base.anp_za.geometry())
+var c_height    = utils.loadCanopyHeight(base.anp_za.geometry())
+// Add variables:
+planet = planet.addBands(topography)
+planet = planet.addBands(c_height)
+var snic        = utils.applySNIC(planet);
+
+Map.centerObject(base.anp_za);
+Map.addLayer(planet, {bands:['R','G','B'], min:0, max:60}, 'Planet RGB');
+Map.addLayer(mbc3,   {min: 0, max: 17, palette: palette_1_17}, 'MapBiomas');
+Map.addLayer(wc,     {min: 0, max: 17, palette: palette_1_17}, 'WorldCover');
+Map.addLayer(snic.randomVisualizer(),{},'snic')
+
+var resultado   = utils.classifyImage(snic, samples, ['R','G','B','N','NDVI','NDWI','elevation','slope','canopy_height','segments'], 'clase', 100);
+Map.addLayer(resultado.classified, {min:0, max:17, palette: palette_1_17}, 'Clasificado');
+print('Muestras usadas:', resultado.training.size());
