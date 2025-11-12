@@ -1,0 +1,422 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var c05_bosque = /* color: #98ff00 */ee.FeatureCollection(
+        [ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.47681949175723, -11.928132479275101],
+                  [-76.47702333964236, -11.92827943968466],
+                  [-76.4770662549866, -11.928415902850789],
+                  [-76.47705552615054, -11.929245177537798],
+                  [-76.47641179598696, -11.9294551200943],
+                  [-76.476057744397, -11.928835789085179],
+                  [-76.47659418619997, -11.928132479275101]]]),
+            {
+              "system:index": "0"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.47687313593752, -11.931124157636319],
+                  [-76.47687313593752, -11.931690998238192],
+                  [-76.47659418619997, -11.932089885358792],
+                  [-76.47625086344607, -11.931753980454154],
+                  [-76.47665855921633, -11.930903719304467]]]),
+            {
+              "system:index": "1"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.48230192698367, -11.929633571139552],
+                  [-76.4818405870331, -11.929329154579909],
+                  [-76.48147580660708, -11.928783303341428],
+                  [-76.48156163729556, -11.928426400014578],
+                  [-76.4818942312134, -11.928394908522016],
+                  [-76.48215172327883, -11.928804297640136],
+                  [-76.48224828280337, -11.929087720513774]]]),
+            {
+              "system:index": "2"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.48159382380373, -11.931638513047067],
+                  [-76.48161528147585, -11.932016406196464],
+                  [-76.48117539919741, -11.932110879401518],
+                  [-76.48095009364016, -11.931690998238192],
+                  [-76.48140070475466, -11.931334098738136]]]),
+            {
+              "system:index": "3"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.48451206721194, -11.926221986705173],
+                  [-76.48453352488406, -11.926447677462413],
+                  [-76.48465690649874, -11.926652373568222],
+                  [-76.48480174578555, -11.926783588939417],
+                  [-76.48492512740023, -11.927051268099834],
+                  [-76.48467299975283, -11.927240217936388],
+                  [-76.48436722792513, -11.926988284791733],
+                  [-76.48439941443331, -11.926526406752156],
+                  [-76.48416874445803, -11.926421434360762],
+                  [-76.48447988070376, -11.926138008701061]]]),
+            {
+              "system:index": "4"
+            })]),
+    c08_pastizal = /* color: #0b4a8b */ee.FeatureCollection(
+        [ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.49347578693056, -11.926250486720221],
+                  [-76.49379765201235, -11.927090265243239],
+                  [-76.49394785571718, -11.928056007330587],
+                  [-76.49327193904544, -11.927835566504825],
+                  [-76.49303590465212, -11.926428939873901]]]),
+            {
+              "system:index": "0"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.4960936229291, -11.927426175924492],
+                  [-76.49588977504396, -11.928433905472234],
+                  [-76.49512802768373, -11.928255453637632],
+                  [-76.4948705356183, -11.927058773595544],
+                  [-76.49520312953615, -11.9265863984414],
+                  [-76.49585758853578, -11.926617890143941]]]),
+            {
+              "system:index": "1"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.50203314363294, -11.924885841075676],
+                  [-76.50221016942793, -11.925064295127022],
+                  [-76.50295045911604, -11.925132527527406],
+                  [-76.50316503583723, -11.925788607424414],
+                  [-76.50304165422254, -11.926239989472226],
+                  [-76.50197413503462, -11.925851591011057],
+                  [-76.50155571042829, -11.92533197598395],
+                  [-76.50151279508405, -11.924948824871915],
+                  [-76.50186684667402, -11.92462340843399]]]),
+            {
+              "system:index": "2"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.50164868176954, -11.927344018750746],
+                  [-76.50234605611341, -11.927611697358119],
+                  [-76.50223876775281, -11.927842635552215],
+                  [-76.50198127568738, -11.928194291061011],
+                  [-76.50153602899091, -11.92854594611387],
+                  [-76.50123025716321, -11.92836749435298],
+                  [-76.5014448338844, -11.92795285598463],
+                  [-76.50152530015485, -11.927674680521465]]]),
+            {
+              "system:index": "3"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.50455083192365, -11.927475233787371],
+                  [-76.50476004422681, -11.92791611584547],
+                  [-76.50445427239912, -11.92813130801832],
+                  [-76.50430943311231, -11.927821641179055],
+                  [-76.50395538152235, -11.927365013160864],
+                  [-76.50435234845655, -11.92718131201718]]]),
+            {
+              "system:index": "4"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.50497249364204, -11.920530847471282],
+                  [-76.5046398997242, -11.921381141133438],
+                  [-76.50335243939705, -11.921580592347468],
+                  [-76.5029662012989, -11.920751294232097],
+                  [-76.50401762723274, -11.9203313954858]]]),
+            {
+              "system:index": "5"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.4999406695301, -11.921423130874889],
+                  [-76.49976900815315, -11.921948002094844],
+                  [-76.4995437025959, -11.921906012434597],
+                  [-76.49918965100593, -11.920992735717055],
+                  [-76.49982265233345, -11.92108721276138]]]),
+            {
+              "system:index": "6"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.49442242778973, -11.929425010133691],
+                  [-76.49446534313397, -11.929661195341708],
+                  [-76.4942185799046, -11.930044339797222],
+                  [-76.49393963016705, -11.930280524465855],
+                  [-76.49313496746258, -11.929813403477885],
+                  [-76.49316178955273, -11.929351530249239],
+                  [-76.49386452831463, -11.929456501506637]]]),
+            {
+              "system:index": "7"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.47776455655831, -11.923403547347869],
+                  [-76.47770554795999, -11.923697473210975],
+                  [-76.47745878473062, -11.92380769532756],
+                  [-76.47711009755868, -11.923644986473057],
+                  [-76.47739441171426, -11.923151610640355]]]),
+            {
+              "system:index": "8"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-76.48956026568987, -11.923161047586035],
+                  [-76.48993309274294, -11.923077068634475],
+                  [-76.49021740689852, -11.923032454805874],
+                  [-76.49012621179202, -11.923224031782658],
+                  [-76.48980971112826, -11.923310635029122],
+                  [-76.48916061654666, -11.92323715348844]]]),
+            {
+              "system:index": "9"
+            })]);
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+/**** SERNANP - COLECTA DE MUESTRAS ANP ZARATE ****/ //CAMBIAR TÍTLO SEGÚN ANP
+
+// === Importar módulo con utilidades Planet ===
+var mosaic = require('users/ryali93/lulc:UTILES/planet.js'); // usa función getPlanetMonthlyImage()
+
+
+//----------------------------------------------------
+// 1. PARÁMETROS GENERALES
+//----------------------------------------------------
+var version = '1';
+var year = 2023;
+var regionId = 'ZR13';
+var region = 'ZARATE';// Cambiar código según ANP
+var tipo_muestra = 'MultiClass';  // 'MultiClass' o 'Urban_mining'
+
+//----------------------------------------------------
+// 2. CAPAS BASE
+//----------------------------------------------------
+var area_anp = ee.FeatureCollection(
+  'projects/royyali/assets/anps_grupo2'
+).filter(ee.Filter.eq('codigo', regionId));
+
+var area_trabajo = ee.FeatureCollection('projects/ee-teledetecciondde/assets/Shp_ANP_ZA_ZR_ACR_ACP_Dissolve').filter(ee.Filter.eq('CODIGO', regionId));
+
+
+var MapBiomas = ee.Image('projects/mapbiomas-public/assets/peru/collection3/mapbiomas_peru_collection3_integration_v1')
+  .select('classification_' + year);
+
+var WorldCover = ee.ImageCollection('ESA/WorldCover/v200').first().select('Map');
+
+//----------------------------------------------------
+// 3. COLORES Y CLASES
+//----------------------------------------------------
+var MB_COLORS = {
+  1:'#1f8d49',3:'#1f8d49',4:'#76c975',5:'#04381d',6:'#026975',
+  9:'#7a5900',10:'#b6db74',11:'#519769',12:'#dbbc74',13:'#b6db74',
+  15:'#edd88e',18:'#e97e4d',21:'#ffcf63',22:'#d4271e',23:'#ffa07a',
+  24:'#d4271e',25:'#db4b4b',27:'#ffffff',29:'#a3b58e',30:'#9c0027',
+  31:'#091077',32:'#f5d1d5',33:'#2532e4',34:'#93d6f6',35:'#9056d0',
+  40:'#c71585',61:'#dcdcdc',66:'#a39358',68:'#f9a47a',70:'#fbe9e0',
+  72:'#f1d5ae'
+};
+
+var MB_CLASSES = {
+  3:'Bosque',4:'Bosque seco',5:'Manglar',6:'Bosque inundable',
+  9:'Plantación forestal',11:'Zona pantanosa/pastizal inun.',
+  12:'Pastizal/herbazal',13:'Otra no boscosa',15:'Pasto',
+  18:'Agricultura',21:'Mosaico agropecuario',23:'Playa',
+  24:'Infraestructura urbana',25:'Otra área sin veg.',
+  29:'Afloramiento rocoso',30:'Minería',31:'Acuicultura',
+  32:'Salina costera',33:'Río/lago/océano',34:'Glaciar',
+  35:'Palma aceitera',40:'Arroz',61:'Salar',66:'Matorral',
+  68:'Área natural sin veg.',70:'Loma costera',72:'Otros cultivos',
+  27:'No observado'
+};
+
+var WC_CLASSES = {
+  10:'Bosque',20:'Matorrales',30:'Pastizales',40:'Cultivos',
+  50:'Construcciones',60:'Escasa vegetación',70:'Nieve/hielo',
+  80:'Agua',90:'Humedales herbáceos',95:'Manglares',100:'Musgo/líquenes'
+};
+
+var WC_COLOR_TABLE = {
+  10:'#006400',20:'#ffbb22',30:'#ffff4c',40:'#f096ff',
+  50:'#fa0000',60:'#b4b4b4',70:'#f0f0f0',80:'#0064c8',
+  90:'#0096a0',95:'#00cf75',100:'#fae6a0'
+};
+
+//----------------------------------------------------
+// 4. PANEL DE CONTROL
+//----------------------------------------------------
+var controlPanel = ui.Panel({style: {position: 'top-left', padding: '8px'}});
+
+controlPanel.add(ui.Label({
+  value: 'COLECTA DE MUESTRAS -' + region,
+  style: {fontWeight: 'bold', width:'150px',fontSize: '16px', margin: '0 0 4px 0'}
+}));
+
+var monthSelect = ui.Select({
+  items: [
+    {label: 'Enero', value: 1},{label: 'Febrero', value: 2},{label: 'Marzo', value: 3},
+    {label: 'Abril', value: 4},{label: 'Mayo', value: 5},{label: 'Junio', value: 6},
+    {label: 'Julio', value: 7},{label: 'Agosto', value: 8},{label: 'Septiembre', value: 9},
+    {label: 'Octubre', value: 10},{label: 'Noviembre', value: 11},{label: 'Diciembre', value: 12}
+  ],
+  value: 6,
+  onChange: updateLayer
+});
+controlPanel.add(ui.Label('Selecciona mes:'));
+controlPanel.add(monthSelect);
+
+
+// --- Etiqueta dinámica para coordenadas ---
+var coordLabel = ui.Label({
+  value: '📍 Haz clic en el mapa para ver coordenadas',
+  style: {fontSize: '12px', color: 'gray', margin: '8px 0 0 0'}
+});
+controlPanel.add(coordLabel);
+
+////
+ui.root.insert(0, controlPanel);
+
+// Panel leyendas (se usarán dos: una para MapBiomas, otra para WorldCover)
+var legendPanel = ui.Panel({style:{position:'bottom-left', padding:'8px'}});
+ui.root.add(legendPanel);
+
+//----------------------------------------------------
+// 5. FUNCIONES AUXILIARES
+//----------------------------------------------------
+function sortNumericArray(arrStr) {
+  return arrStr.map(function(s){ return parseInt(s,10); }).sort(function(a,b){return a-b;});
+}
+
+function prepareRemapAndPalette(image, geom, bandName, colorDict, classNamesDict, callback) {
+  var freq = image.reduceRegion({
+    reducer: ee.Reducer.frequencyHistogram(),
+    geometry: geom,
+    scale: 30,
+    maxPixels: 1e13
+  }).get(bandName);
+
+  ee.Dictionary(freq).keys().evaluate(function(classKeys) {
+    if (!classKeys || !classKeys.length) { callback(null); return; }
+
+    var origIds = sortNumericArray(classKeys);
+    var palette = [], from = [], to = [], names = [];
+    for (var i = 0; i < origIds.length; i++) {
+      var id = origIds[i];
+      from.push(id); to.push(i + 1);
+      palette.push(colorDict[id] || '#FFFFFF');
+      names.push(classNamesDict[id] || ('Clase ' + id));
+    }
+    var remapped = image.remap(from, to).rename('remap');
+    callback({remappedImage: remapped, palette: palette, origIds: origIds, names: names});
+  });
+}
+
+function drawLegend(origIds, names, palette, title) {
+  var p = ui.Panel({style:{padding:'8px 12px', backgroundColor:'rgba(255,255,255,0.9)', margin:'4px'}});
+  p.add(ui.Label({value: title, style:{fontWeight:'bold', fontSize:'14px', margin:'0 0 6px 0'}}));
+
+  var grid = ui.Panel({layout: ui.Panel.Layout.Flow('horizontal')});
+  var col1 = ui.Panel({layout: ui.Panel.Layout.Flow('vertical'), style:{padding:'0 8px'}});
+  var col2 = ui.Panel({layout: ui.Panel.Layout.Flow('vertical'), style:{padding:'0 8px'}});
+
+  for (var i = 0; i < origIds.length; i++) {
+    var color = palette[i];
+    var name = names[i];
+    var row = ui.Panel({
+      layout: ui.Panel.Layout.Flow('horizontal'),
+      widgets: [
+        ui.Label('', {backgroundColor: color, padding: '6px', margin: '0 8px 6px 0', border: '1px solid #999'}),
+        ui.Label(origIds[i] + ' – ' + name, {fontSize: '12px', margin: '0 0 6px 0'})
+      ]
+    });
+    if (i % 2 === 0) col1.add(row); else col2.add(row);
+  }
+  grid.add(col1); grid.add(col2); p.add(grid);
+  legendPanel.add(p);
+}
+
+//----------------------------------------------------
+// 6. FUNCIÓN PRINCIPAL: CARGA AMBAS REFERENCIAS
+//----------------------------------------------------
+function updateLayer() {
+  Map.layers().reset();
+  legendPanel.clear();
+
+  var month = parseInt(monthSelect.getValue());
+  var planetImage = mosaic.getPlanetMonthlyImage(year, month, area_trabajo.geometry());
+  var rgbVis = {bands: ['R','G','B'], min: 0, max: 80, gamma: 1.6};
+  Map.addLayer(planetImage, rgbVis, 'Planet ' + year + ' M' + month, true);
+
+  Map.addLayer(planetImage.select('NDVI'),
+    {min: 0.0, max: 0.8, palette: ['#a50026','#d73027','#f46d43','#fdae61','#fee08b','#d9ef8b','#a6d96a','#1a9850','#006837']},
+    'NDVI ' + year + ' M' + month, false);
+
+  Map.addLayer(planetImage.select('NDWI'),
+    {min: -1, max: 1, palette: ['#ffeda0', '#253494', '#2c7fb8']},
+    'NDWI ' + year + ' M' + month, false);
+
+  var ndsi = planetImage.normalizedDifference(['G','N']).rename('NDSI');
+  Map.addLayer(ndsi, {min: -0.5, max: 1.0, palette: ['#0000ff', '#00ffff', '#ffffff']}, 'NDSI', false);
+
+  // --- Añadir MapBiomas ---
+  prepareRemapAndPalette(MapBiomas.clip(area_trabajo), area_trabajo.geometry(), 'classification_' + year,
+    MB_COLORS, MB_CLASSES, function(result) {
+      if (result) {
+        Map.addLayer(result.remappedImage.clip(area_trabajo),
+          {min: 1, max: result.palette.length, palette: result.palette},
+          'MapBiomas Perú C3 (' + year + ')', true);
+        drawLegend(result.origIds, result.names, result.palette, 'MapBiomas C3 (' + year + ')');
+      } else {
+        ui.alert('No se encontraron clases MapBiomas en el área.');
+      }
+    });
+
+  // --- Añadir WorldCover ---
+  prepareRemapAndPalette(WorldCover.clip(area_trabajo), area_trabajo.geometry(), 'Map',
+    WC_COLOR_TABLE, WC_CLASSES, function(result) {
+      if (result) {
+        Map.addLayer(result.remappedImage.clip(area_trabajo),
+          {min: 1, max: result.palette.length, palette: result.palette},
+          'WorldCover (2021)', true);
+        drawLegend(result.origIds, result.names, result.palette, 'WorldCover (2021)');
+      } else {
+        ui.alert('No se encontraron clases WorldCover en el área.');
+      }
+    });
+
+  // --- Límite ANP ---
+  Map.addLayer(area_trabajo.style({color: 'cyan', fillColor: '00000000'}), {}, 'Límite ANP + ZA', true);
+  Map.addLayer(area_anp.style({color: 'red', fillColor: '00000000'}), {}, 'Límite ANP', true);
+}
+  Map.centerObject(area_trabajo)
+
+// Carga inicial
+updateLayer();
+//----------------------------------------------------
+// 7. CAPTURAR COORDENADAS CON CLICK EN EL MAPA
+//----------------------------------------------------
+// var lastPointLayer;
+// Map.onClick(function(coords) {
+//   var lon = coords.lon.toFixed(6);
+//   var lat = coords.lat.toFixed(6);
+
+//   coordLabel.setValue('📍 Long: ' + lon + ' | Lat: ' + lat);
+//   print('📍 Coordenadas:', lon, lat);
+
+//   if (lastPointLayer) Map.remove(lastPointLayer);
+//   var punto = ee.Geometry.Point([lon, lat]);
+//   lastPointLayer = Map.addLayer(punto, {color: 'magenta'}, 'coordenada');
+// })
+
+//----------------------------------------------------
+// 8. EXPORTAR MUESTRAS MANUALES
+//----------------------------------------------------
+
+// (al terminar de dibujar tus polígonos de muestra)
+// var list_geom = ee.FeatureCollection([Bosque, Pastizal, Urbano, Mineria]).flatten();
+
+// Export.table.toAsset({
+//   collection: list_geom,
+//   description: tipo_muestra + '-' + year + '-draw-' + version,
+//   assetId: 'projects/ee-anp-lineabase/assets/AUXILIAR-DATA/geometry/' +
+//             tipo_muestra + '-' + year + '-draw-' + version
+// });

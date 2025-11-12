@@ -1,0 +1,208 @@
+// =========================================
+// P02A – Filtro temporal mensual (ventanas/bordes)
+// Requiere: users/ryali93/lulc:UTILES/utils_post.js  (usa: edgeFirst, edgeLast, window3, window4, keepClasses, keepMonths)
+// Lee:  P01-{code}  desde DIR_IN_POST
+// Escribe: P02A-{code} a DIR_OUT_POST
+// =========================================
+
+var up = require('users/ryali93/lulc:UTILES/utils_post.js');
+
+// ------------------ PARÁMETROS ------------------
+var param = {
+  code_region: 'RN06',
+  year: 2023,
+  nodata: 17,
+
+  // I/O
+  DIR_IN_POST:  'projects/ee-victorianavarrov0/assets/clasificacion_post/rn06',  // donde quedó P01
+  DIR_OUT_POST: 'projects/ee-victorianavarrov0/assets/clasificacion_post/rn06',  // salida P02A
+
+  // Región
+  REGION_FC:   'projects/ee-teledetecciondde/assets/Shp_ANP_ZA_ZR_ACR_ACP_Dissolve',
+  REGION_PROP: 'CODIGO',
+
+  // Preview
+  month_preview: 3,
+  show_layers: true,
+
+  // Control de filtro temporal
+  // Orden de clases para aplicar ventanas (prioridad): ajusta según tu LUT
+  ordem_exec_first:  [],                 // clases que deben fijarse en mes 1 (si 2 y 3 son esa clase)
+  ordem_exec_last:   [],                 // clases que deben fijarse en mes 12 (si 10 y 11 son esa clase)
+  ordem_exec_middle: [5,4,6,7,8,9,12,11,13,14,16,10], // clases a filtrar en ventanas (3/4)
+
+  // Exclusiones (no tocar)
+  exclusion: {
+    classes: [17],        // por defecto preserva SIN DATO=17
+    months:  []           // ej. [2,8] para no tocar esos meses
+  },
+
+  // (Opcional) remapeos locales por polígonos ANTES del filtro temporal
+  // cada Feature debe tener props: original:"1,8", new:"1,8", t0:1, t1:12
+  remapGeometry: [
+    // ee.FeatureCollection([...])
+  ]
+};
+
+// Paleta (sólo visualización)
+var visCat = {
+  min: 1, max: 29,
+  palette: [
+    '#ff0000','#b40b0b','#d2ffa1','#5bdd4a','#139b01','#17ff7e','#0f5e00',
+    '#ffec13','#ceb747','#f8b3ff','#d72fff','#00ff00','#ccebc5','#13f5ff',
+    '#0000ff','#3b8aff','#d4d4d4','#2CA5A9','#C79CF4','#E8C27E','#9BBF6A',
+    '#D0F400','#F57F17','#8AA62D','#546D1D','#9E9E9E','#E6C98F','#D9B600',
+    '#66BB6A'
+  ]
+};
+
+// ------------------ HELPERS ------------------
+function makeBandNames() {
+  var months = ee.List.sequence(1,12);
+  return up.makeBandNames(months); // 'clasificacion_1'..'clasificacion_12'
+}
+
+function loadRegion() {
+  var fc = ee.FeatureCollection(param.REGION_FC)
+              .filter(ee.Filter.eq(param.REGION_PROP, param.code_region));
+  var raster = ee.Image(1).clip(fc.geometry()).selfMask();
+  return {fc: fc, raster: raster};
+}
+
+// (opcional) remapeo local como en tu referencia, pero aplicado a un stack ya estandarizado
+function remapWithPolygons(imageYear, polygons, bandNames){
+  if (!polygons || polygons.length === 0) return imageYear;
+
+  polygons.forEach(function(fc){
+    var remappedImgs = fc.map(function(layer){
+      layer = ee.Feature(layer);
+      var from = ee.String(layer.get('original')).split(',');
+      var to   = ee.String(layer.get('new')).split(',');
+
+      var t0 = ee.Number.parse(layer.get('t0'));
+      var t1 = ee.Number.parse(layer.get('t1'));
+      var yearsSel = ee.List.sequence(t0, t1, 1);
+
+      from = from.map(function(x){ return ee.Number.parse(x); });
+      to   = to.map(function(x){ return ee.Number.parse(x); });
+
+      var area = imageYear.clip(layer.geometry());
+
+      var remapImg = ee.Image(yearsSel.iterate(function(m, acc){
+        m = ee.Number(m).toInt16();
+        acc = ee.Image(acc);
+        var bname = ee.String('clasificacion_').cat(m.format());
+        var remappedB = area.select(bname).remap(from, to).rename(bname);
+        return acc.addBands(remappedB, null, true);
+      }, area));
+
+      return remapImg;
+    });
+
+    var merged = ee.ImageCollection(remappedImgs).mosaic();
+    imageYear  = merged.unmask(imageYear).updateMask(imageYear.neq(27)); // si usas 27 en tu lógica
+  });
+
+  return imageYear.select(bandNames);
+}
+
+// ------------------ PIPELINE P02A ------------------
+
+var bn = makeBandNames();
+var reg = loadRegion();
+Map.centerObject(reg.fc, 12);
+Map.addLayer(reg.fc.style({color:'ff0000', fillColor:'00000000'}), {}, 'ANP', false);
+
+// 1) Leer stack de P01
+var p01Asset = param.DIR_IN_POST + '/P01-' + param.code_region;
+print(p01Asset)
+var img0 = ee.Image(p01Asset)
+            .updateMask(reg.raster);
+
+// Garantizar bandas esperadas por seguridad
+img0 = up.ensureMonthlyBands(img0, bn, reg.raster);
+print(img0)
+
+// 2) (Opcional) Remapeos locales antes del filtro temporal
+if (param.remapGeometry && param.remapGeometry.length){
+  img0 = remapWithPolygons(img0, param.remapGeometry, bn);
+}
+
+// 3) Construir la imagen 'working' sobre la que aplicamos reglas temporales
+var working = img0;
+
+// 3.1) Fijar primer mes para clases prioritarias (si mes 2 y 3 == clase)
+(param.ordem_exec_first || []).forEach(function(cls){
+  working = up.edgeFirst(working, cls);
+});
+
+// 3.2) Fijar último mes para clases prioritarias (si mes 10 y 11 == clase)
+(param.ordem_exec_last || []).forEach(function(cls){
+  working = up.edgeLast(working, cls);
+});
+
+// 3.3) Ventanas temporales (intermedios)
+// Patrón de pasos como tu referencia: 3 → 4 → 3
+(param.ordem_exec_middle || []).forEach(function(cls){
+  working = up.window3(working, cls);
+});
+(param.ordem_exec_middle || []).forEach(function(cls){
+  working = up.window4(working, cls);
+});
+(param.ordem_exec_middle || []).forEach(function(cls){
+  working = up.window3(working, cls);
+});
+
+// 4) Exclusiones / preservaciones
+// 4.1) Preservar clases tal cual (por defecto preserva 17)
+if (param.exclusion && param.exclusion.classes && param.exclusion.classes.length){
+  working = up.keepClasses(img0, working, param.exclusion.classes);
+}
+
+// 4.2) Excluir meses (no tocar esos meses)
+if (param.exclusion && param.exclusion.months && param.exclusion.months.length){
+  // traducir a nombres de banda
+  var monthsToKeep = param.exclusion.months.map(function(m){
+    var mm = (m < 10 ? '0'+m : ''+m); // solo si quisieras usar formato, pero aquí usamos enteros
+    return 'clasificacion_' + m;
+  });
+  working = up.keepMonths(img0, working, monthsToKeep);
+}
+
+// 5) Salida + metadatos
+var outImg = working.select(bn)
+  .updateMask(reg.raster)
+  .set({
+    'codigo':      param.code_region,
+    'anio':        param.year,
+    'descripcion': 'P02A_filtro_temporal'
+  });
+
+// 6) Export
+var outName  = 'P02A-' + param.code_region;
+var outAsset = param.DIR_OUT_POST + '/' + outName;
+
+print('P02A salida:', outImg);
+print('Export name:', outName);
+
+Export.image.toAsset({
+  image: outImg.byte(),                 // categórico
+  description: outName,
+  assetId: outAsset,
+  pyramidingPolicy: {'.default': 'mode'},
+  region: reg.fc.geometry(),
+  scale: 4.7,
+  maxPixels: 1e13
+});
+
+// 7) Vistas (opcionales)
+if (param.show_layers){
+  Map.addLayer(img0.select('clasificacion_' + param.month_preview), visCat,
+               'P01 (mes ' + param.month_preview + ')', false);
+  Map.addLayer(outImg.select('clasificacion_' + param.month_preview), visCat,
+               'P02A (mes ' + param.month_preview + ')', true);
+
+  // (opcional) modo temporal para inspección
+  var tmode = up.temporalMode(outImg);
+  Map.addLayer(tmode, {min:1, max:29, palette:visCat.palette}, 'Temporal Mode (inspección)', false);
+}

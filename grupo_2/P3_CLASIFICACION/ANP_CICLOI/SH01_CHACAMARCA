@@ -1,16 +1,21 @@
-//var palettes = require('users/gena/packages:palettes');
-var utils    = require('users/ryali93/lulc:UTILES/utils.js');
-var samples  = require('users/ryali93/lulc:P2_MUESTRAS/ANP/samples');
-samples = ee.FeatureCollection(samples.sh01).flatten()
+// SH01_CHACAMARCA.js
+var samples = require('users/ryali93/lulc:P2_MUESTRAS/ANP/samples');
+var utils   = require('users/ryali93/lulc:UTILES/utils.js');
+var schema  = require('users/ryali93/lulc:UTILES/schema.js');
+//samples = ee.FeatureCollection(samples.sh01).flatten()
 
-// Definir las colecciones y variables necesarias
-var version = '1'
-var year = 2023
-var month = 9
-var anp_cod = 'SH01'
-var cloud_blue_thr = 30
+var cfg = {
+  code:'SH01', 
+  year:2023, 
+  month:4, 
+  blueThr:30, 
+  scale:5, 
+  seed:42, 
+  nTrees:200, 
+  trainSplit:0.7
+};
 
-var palette_1_17       = ["ffffff", "ff0000","b40b0b","ffbd08","5bdd4a","139b01","17ff7e","0f5e00","ffec13","ceb747","f8b3ff","d72fff","00ff00","ccebc5","13f5ff","0000ff","3b8aff","d4d4d4"];
+var palette_1_17 = ["ffffff", "ff0000","b40b0b","ffbd08","5bdd4a","139b01","17ff7e","0f5e00","ffec13","ceb747","f8b3ff","d72fff","00ff00","ccebc5","13f5ff","0000ff","3b8aff","d4d4d4"];
 var remap_MB = {
     from: [3, 4, 5, 6, 9, 11, 12, 13, 15, 18, 21, 24, 25, 30, 31, 32, 33, 34],
     to:   [5, 4, 6, 5, 7, 12,  8,  9,  8,  3,  3,  1, 10,  2, 15, 10, 15, 14]
@@ -20,23 +25,105 @@ var remap_WC = {
     to:   [ 7,  9,  8,  3,  1, 10, 14, 15, 12,  6,  17]
 }
 
-var base        = utils.loadBaseData(anp_cod);
-var planet      = utils.getMonthlyPlanet(2023, month, base.anp_za.geometry(), 30);
+var base        = utils.loadBaseData(cfg.code);
+var planet      = utils.getMonthlyPlanet(cfg.year, cfg.month, base.anp_za.geometry(), 30);
 var mbc3        = utils.loadMapBiomas2023(base.anp_za.geometry()).remap(remap_MB.from, remap_MB.to);
 var wc          = utils.loadWorldCover2021(base.anp_za.geometry()).remap(remap_WC.from, remap_WC.to);
 var topography  = utils.loadSlopeElevation(base.anp_za.geometry())
 var c_height    = utils.loadCanopyHeight(base.anp_za.geometry())
 // Add variables:
-planet = planet.addBands(topography)
-planet = planet.addBands(c_height)
+planet          = planet.addBands(topography)
+planet          = planet.addBands(c_height)
 var snic        = utils.applySNIC(planet);
 
-Map.centerObject(base.anp_za);
-Map.addLayer(planet, {bands:['R','G','B'], min:0, max:60}, 'Planet RGB');
+// Map.centerObject(base.anp_za);
+// Map.addLayer(planet, {bands:['R','G','B'], min:0, max:60}, 'Planet RGB');
 Map.addLayer(mbc3,   {min: 0, max: 17, palette: palette_1_17}, 'MapBiomas');
 Map.addLayer(wc,     {min: 0, max: 17, palette: palette_1_17}, 'WorldCover');
-Map.addLayer(snic.randomVisualizer(),{},'snic')
+// Map.addLayer(snic.randomVisualizer(),{},'snic')
 
-var resultado   = utils.classifyImage(snic, samples, ['R','G','B','N','NDVI','NDWI','elevation','slope','canopy_height','segments'], 'clase', 100);
-Map.addLayer(resultado.classified, {min:0, max:17, palette: palette_1_17}, 'Clasificado');
-print('Muestras usadas:', resultado.training.size());
+// var resultado   = utils.classifyImage(snic, samples, ['R','G','B','N','NDVI','NDWI','elevation','slope','canopy_height','segments'], 'clase', 100);
+// Map.addLayer(resultado.classified, {min:0, max:17, palette: palette_1_17}, 'Clasificado');
+// print('Muestras usadas:', resultado.training.size());
+
+// ===== 3) Muestras y listas de esquema (desde SCHEMA) =====
+var SCHEMA = schema.SCHEMA;
+var SCHEMA_PALETTE = utils.paletteFromSchema(schema);
+var SCHEMA_CODES   = utils.codesFromSchema(schema);
+
+// Tus muestras (ya las tienes)
+var samplesFC = ee.FeatureCollection(samples.sh01).flatten();
+
+// ===== 4) Construir imagen de clases (rasterizar polígonos) =====
+var AOI = base.anp_za.geometry();
+var classImg = ee.Image().byte().paint(samplesFC, 'clase').rename('clase').clip(AOI);
+
+// ===== 5) Predictores (mantenemos tus bandas + segments) =====
+var predictors = ['R','G','B','N','NDVI','NDWI','elevation','slope','canopy_height','segments'];
+
+// Pila para muestreo estratificado: clase + predictores
+var stack = classImg.addBands(snic.select(predictors));
+
+// ===== 6) Muestreo estratificado balanceado por clase =====
+// Ajusta perClass si quieres menos/más puntos por clase (evita overfitting por polígonos enormes).
+var perClass = 300;
+
+var trainingAll = stack.stratifiedSample({
+  numPoints: 0,                                   // usamos classPoints explícito
+  classBand: 'clase',
+  classValues: ee.List(SCHEMA_CODES),
+  classPoints: ee.List.repeat(perClass, SCHEMA_CODES.length),
+  region: AOI,
+  scale: cfg.scale,
+  seed: cfg.seed,
+  geometries: false,
+  dropNulls: true,
+  tileScale: 2
+});
+
+// ===== 7) Split reproducible train/test =====
+var tbl = trainingAll.randomColumn('rand', cfg.seed);
+var train = tbl.filter(ee.Filter.lt('rand', cfg.trainSplit));
+var test  = tbl.filter(ee.Filter.gte('rand', cfg.trainSplit));
+
+// ===== 8) Entrenamiento RF =====
+var rf = ee.Classifier.smileRandomForest({
+  numberOfTrees: cfg.nTrees,
+  seed: cfg.seed
+}).train({
+  features: train,
+  classProperty: 'clase',
+  inputProperties: predictors
+});
+
+// ===== 9) Clasificación =====
+var classified = snic.select(predictors).classify(rf);
+
+// ===== 10) Métricas completas =====
+var cm = test.classify(rf).errorMatrix('clase','classification');
+print('Train n:', train.size());
+print('Test n:', test.size());
+print('Confusion Matrix:', cm);
+print('Overall Accuracy:', cm.accuracy());
+print('Kappa:', cm.kappa());
+print('User’s accuracy (UA):', cm.consumersAccuracy());
+print('Producer’s accuracy (PA):', cm.producersAccuracy());
+
+// ===== 11) Visualización con SCHEMA (códigos no contiguos → remap a 0..K-1) =====
+var codeList = ee.List(SCHEMA_CODES);
+var idxList  = ee.List.sequence(0, SCHEMA_CODES.length - 1);
+var display  = classified.remap(codeList, idxList, -1);
+
+Map.centerObject(AOI);
+Map.addLayer(planet, {bands:['R','G','B'], min:0, max:60}, 'Planet RGB');
+Map.addLayer(display, {min:0, max: SCHEMA_CODES.length - 1, palette: SCHEMA_PALETTE}, 'Clasificación (schema)');
+
+// ===== 12) Export =====
+Export.image.toAsset({
+  image: classified.clip(AOI),
+  description: 'SH01_Clasif_2023M' + cfg.month + '_v1',
+  assetId: 'projects/royyali/assets/ANP/SH01/Clasificacion/SH01_v1',
+  region: AOI,
+  scale: cfg.scale,
+  maxPixels: 1e13
+});

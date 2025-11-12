@@ -1,0 +1,463 @@
+
+
+/********************
+ * SH01 – Clasificación mensual (fenológica)
+ * Fuente de samples: módulo SH01_samples.js (sin assets)
+ * Reglas:
+ *   - Entrena un modelo por mes con muestras cuyo 'meses' contiene el mes.
+ *   - Si un mes no tiene muestras: no clasifica (panel gris "No clasificado").
+ *   - Predictores constantes todo el año (P1).
+ ********************/
+
+// === IMPORTS ===
+var samplesMod = require('users/ryali93/lulc:P2_MUESTRAS/RVS01_samples.js');
+var utils      = require('users/ryali93/lulc:UTILES/utils.js');
+var schema     = require('users/ryali93/lulc:UTILES/schema.js');
+
+// === CONFIG ===
+var cfg = {
+  code: 'RVS01',
+  year: 2023,
+  blueThr: 30,
+  scale: 5,
+  seed: 42,
+  nTrees: 200,
+  trainSplit: 0.7,
+  perClass: 300,           // máximo por clase
+  pointsPerFeat: 30,     // muestras por polígono
+  minPolygonsForPPF: 5   // aplicar Smart Sampling solo si hay >=5
+};
+/* ---------------- SCHEMA & helpers seguros ---------------- */
+
+// Formatea "code_nombre_clase" sin replace() client-side
+function toSafeLabel(code, name) {
+  var parts  = ee.String(name).split(' ');
+  var joined = ee.List(parts).join('_');
+  return ee.String(code).cat('_').cat(joined.toLowerCase());
+}
+
+// SCHEMA directo desde schema.js (sin overrides)
+var SCHEMA = schema.SCHEMA.map(function(d){
+  d = ee.Dictionary(d);
+  return ee.Dictionary({
+    code:  ee.Number(d.get('code')),
+    name:  ee.String(d.get('name')),
+    color: ee.String(d.get('color'))
+  });
+});
+
+var VALID_CODES   = ee.List(SCHEMA.map(function(d){ return ee.Dictionary(d).get('code'); }));
+var IDX_LIST      = ee.List.sequence(0, VALID_CODES.length().subtract(1));
+var LABEL_LIST    = SCHEMA.map(function(d){ d = ee.Dictionary(d); return toSafeLabel(d.get('code'), d.get('name')); });
+var CODE_STR_LIST = VALID_CODES.map(function(c){ return ee.Number(c).format(); });
+var CODE2LABEL    = ee.Dictionary.fromLists(CODE_STR_LIST, LABEL_LIST);
+
+// PALETA Y K del esquema
+var PALETTE_EE = ee.List(               // <--- ENVUELTO EN ee.List()
+  SCHEMA.map(function(d){
+    d = ee.Dictionary(d);
+    return ee.String(d.get('color')).slice(1); // sin '#'
+  })
+);
+var K_EE = VALID_CODES.length();
+
+// Convertimos solo cuando lo necesitemos en JS
+var PALETTE_JS;
+var K_JS;
+
+print('Tipo de PALETTE_EE:', PALETTE_EE);
+
+PALETTE_EE.evaluate(function(p){
+  PALETTE_JS = p;
+
+  K_EE.evaluate(function(k){
+    K_JS = k;
+
+    print('PALETA lista (JS):', PALETTE_JS);
+    print('Número de clases (JS):', K_JS);
+  });
+});
+
+
+
+
+/* ---------------- Área / Referencias opcionales ---------------- */
+
+var base = utils.loadBaseData(cfg.code);
+var AOI  = base.anp_za.geometry();
+
+// (Opcional) referencias para comparar visualmente
+var remap_MB = {
+  from: [3, 4, 5, 6, 9, 11, 12, 13, 15, 18, 21, 24, 25, 30, 31, 32, 33, 34],
+  to:   [5, 4, 6, 5, 7, 12,  8,  9,  8,  3,  3,  1, 10,  2, 15, 10, 15, 14]
+};
+var remap_WC = {
+  from: [10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100],
+  to:   [ 7,  9,  8,  3,  1, 10, 14, 15, 12,  6,  17]
+};
+var mbc3 = utils.loadMapBiomas2023(AOI).remap(remap_MB.from, remap_MB.to);
+var wc   = utils.loadWorldCover2021(AOI).remap(remap_WC.from, remap_WC.to);
+
+/* ---------------- Predictores & samples ---------------- */
+
+var predictors = ['R','G','B','N','NDVI','NDWI','elevation','slope','canopy_height','segments'];
+
+var samplesAll = ee.FeatureCollection(samplesMod.RVS01);
+print('Samples RVS01 (total):', samplesAll.size());
+
+/* ---------------- Helpers robustos ---------------- */
+
+// Remapea códigos inválidos a 0 (enmascarados). c17 permanece válido.
+function toSafeClassAndIdx(imgCodes){
+  var clsSafe = imgCodes.remap(VALID_CODES, VALID_CODES, 0).rename('code');
+  clsSafe = clsSafe.updateMask(clsSafe.neq(0));
+  var idx = clsSafe.remap(VALID_CODES, IDX_LIST, -1).rename('idx')
+                   .updateMask(clsSafe.eq(clsSafe));
+  return {code: clsSafe, idx: idx};
+}
+
+// Áreas por clase (ha), completando con 0 donde falte
+function areasByClassSafe(imgCodes, geom, scale, monthNum){
+  var areaHa = ee.Image.pixelArea().divide(1e4);
+  var red = areaHa.addBands(imgCodes.rename('class')).reduceRegion({
+    reducer: ee.Reducer.sum().group({groupField: 1, groupName: 'class'}),
+    geometry: geom, scale: scale, maxPixels: 1e13, tileScale: 2
+  });
+
+  var groups = ee.List(ee.Dictionary(red).get('groups', []));
+  var classAreaDict = ee.Dictionary(groups.iterate(function(el, acc){
+    el = ee.Dictionary(el);
+    return ee.Dictionary(acc).set(ee.Number(el.get('class')), ee.Number(el.get('sum')));
+  }, ee.Dictionary({})));
+
+  var base = ee.Dictionary({month: monthNum});
+  var completed = VALID_CODES.iterate(function(code, acc){
+    acc = ee.Dictionary(acc);
+    var keyStr  = ee.Number(code).format();
+    var colName = ee.String(CODE2LABEL.get(keyStr));
+    var val     = ee.Number(classAreaDict.get(code, 0));
+    return acc.set(colName, val);
+  }, base);
+
+  return ee.Feature(null, ee.Dictionary(completed));
+}
+
+function buildSNICForMonth(m){
+  var p = utils.getMonthlyPlanet(cfg.year, m, AOI, cfg.blueThr);
+  var pExt = p.addBands(utils.loadSlopeElevation(AOI))
+              .addBands(utils.loadCanopyHeight(AOI));
+  var sn = utils.applySNIC(pExt);
+  return {planet: pExt, snic: sn};
+}
+
+function getSamplesForMonth(m){
+  return samplesAll.filter(ee.Filter.listContains('meses', m));
+}
+
+function rasterizeClasses(samplesMonth){
+  return ee.Image().byte().paint(samplesMonth, 'clase').rename('clase').clip(AOI);
+}
+
+/* ---------------- Muestreo 2B (realista) ----------------
+   Puntos por clase ~ (# features de esa clase en el mes) * pointsPerFeat,
+   limitado por cfg.perClass. Si una clase no tiene features → 0 puntos.
+--------------------------------------------------------- */
+// function classPointsForMonth(samplesMonth){
+//   var hist = ee.Dictionary(samplesMonth.aggregate_histogram('clase')); // {code: nFeatures}
+//   var ptsList = VALID_CODES.map(function(code){
+//     code = ee.Number(code);
+//     var nFeat = ee.Number(hist.get(code, 0));
+//     var perFeat = ee.Number(cfg.pointsPerFeat !== null ? cfg.pointsPerFeat : 5);
+//     var pts = nFeat.multiply(perFeat).int();
+//     // límite superior por clase, y no negativo
+//     pts = ee.Number(pts.min(cfg.perClass)).max(0).int();
+//     return pts;
+//   });
+//   return ee.List(ptsList);
+// }
+// Smart Sampling: combina perClass + pointsPerFeat
+function classPointsForMonth(samplesMonth){
+  var hist = ee.Dictionary(samplesMonth.aggregate_histogram('clase')); // {code: nPolygons}
+
+  var ptsList = VALID_CODES.map(function(code){
+    code = ee.Number(code);
+    var nFeat = ee.Number(hist.get(code, 0));  // # de polígonos de esa clase
+    
+    // Si no hay polígonos, 0
+    var ptsSmart = ee.Algorithms.If(
+      nFeat.gte(cfg.minPolygonsForPPF),
+      nFeat.multiply(cfg.pointsPerFeat),
+      cfg.perClass
+    );
+
+    // Limitar al máximo por clase
+    var pts = ee.Number(ptsSmart).min(cfg.perClass).int();
+
+    // Evitar negativos
+    return pts.max(0);
+  });
+
+  return ee.List(ptsList);
+}
+
+
+/* ---------------- Clasificación por mes ---------------- */
+
+function classifyMonth(month){
+  month = ee.Number(month);
+  var sm = getSamplesForMonth(month);
+  var hasSamples = sm.size().gt(0);
+
+  return ee.Dictionary(ee.Algorithms.If(hasSamples, (function(){
+    var ims = buildSNICForMonth(month);
+    var sn  = ims.snic;
+
+    var classImg = rasterizeClasses(sm);
+
+    // Muestreo 2B: puntos por clase según presencia de features
+    var classPts = classPointsForMonth(sm);
+
+    var stack = classImg.addBands(sn.select(predictors));
+    var trainingAll = stack.stratifiedSample({
+      numPoints: 0,
+      classBand: 'clase',
+      classValues: VALID_CODES,
+      classPoints: classPts,    // << 2B
+      region: AOI,
+      scale: cfg.scale,
+      seed: cfg.seed,
+      geometries: false,
+      dropNulls: true,
+      tileScale: 2
+    });
+
+    var tbl   = trainingAll.randomColumn('rand', cfg.seed);
+    var train = tbl.filter(ee.Filter.lt('rand', cfg.trainSplit));
+    var test  = tbl.filter(ee.Filter.gte('rand', cfg.trainSplit));
+
+    // Si no hay suficientes muestras para entrenar y validar → unavailable
+    var canTrain = train.size().gt(0).and(test.size().gt(0));
+
+    return ee.Dictionary(ee.Algorithms.If(canTrain, (function(){
+
+      var rf = ee.Classifier.smileRandomForest({
+        numberOfTrees: cfg.nTrees,
+        seed: cfg.seed
+      }).train({ features: train, classProperty: 'clase', inputProperties: predictors });
+
+      var cm = test.classify(rf).errorMatrix('clase','classification');
+
+      var clsRaw = sn.select(predictors).classify(rf);
+      var safe   = toSafeClassAndIdx(clsRaw);
+      var seg    = sn.select('segments');
+      var edges  = seg.reduceNeighborhood(ee.Reducer.max(), ee.Kernel.square(1))
+                      .neq(seg).selfMask();
+
+      return ee.Dictionary({
+        available: true,
+        rgb: ims.planet.select(['R','G','B']),
+        codes: safe.code,
+        disp:  safe.idx,
+        segEdges: edges,
+        oa: cm.accuracy(),
+        kappa: cm.kappa()
+      });
+
+    })(), ee.Dictionary({available:false})));
+
+  })(), ee.Dictionary({available:false})));
+}
+
+/* ---------------- UI ---------------- */
+
+ui.root.clear();
+
+var sidebar = ui.Panel({style: {width: '340px', padding: '8px'}});
+sidebar.add(ui.Label('Clasificación multimes – ' + cfg.code, {fontWeight:'bold', fontSize:'16px'}));
+
+// Leyenda
+var legendTitle = ui.Label('Leyenda (clases usadas)', {fontWeight:'bold', margin:'8px 0 4px 0'});
+var legendPanel = ui.Panel();
+sidebar.add(legendTitle);
+sidebar.add(legendPanel);
+
+// Grilla 3x4 de mini-mapas
+function col(){ return ui.Panel({layout: ui.Panel.Layout.flow('vertical'), style:{stretch:'both', padding:'0', margin:'0'}}); }
+var col1 = col(), col2 = col(), col3 = col(), col4 = col();
+var grid = ui.Panel({layout: ui.Panel.Layout.flow('horizontal'), style:{stretch:'both', padding:'0', margin:'0'}});
+grid.add(col1); grid.add(col2); grid.add(col3); grid.add(col4);
+
+function miniMap(month){
+  var map = ui.Map();
+  map.setControlVisibility({all:false, zoomControl:true});
+  map.style().set({width:'305px', height:'215px', margin:'2px', border:'1px solid #444'});
+
+  var res = classifyMonth(month);
+
+  var panel = ui.Panel({layout: ui.Panel.Layout.flow('vertical'), style:{padding:'0', margin:'0'}});
+  var tools = ui.Panel({layout: ui.Panel.Layout.flow('horizontal'), style:{margin:'0 0 2px 2px'}});
+  tools.add(ui.Label('Mes ' + month, {fontWeight:'bold'}));
+  panel.add(tools);
+
+  // Mostrar OA/Kappa si existen
+  res.get('available').evaluate(function(ok){
+    if (!ok){
+      tools.add(ui.Label('Sin modelo', {margin:'0 0 0 8px', color:'#999'}));
+      return;
+    }
+
+    res.get('oa').evaluate(function(oa){
+      res.get('kappa').evaluate(function(kap){
+        var oaNum  = (typeof oa === 'number')  ? oa  : null;
+        var kapNum = (typeof kap === 'number') ? kap : null;
+
+        if (oaNum !== null && kapNum !== null){
+          tools.add(ui.Label('OA: ' + oaNum.toFixed(3) + ' | K: ' + kapNum.toFixed(3),
+            {margin:'0 0 0 8px', color:'#555'}));
+        } else {
+          tools.add(ui.Label('OA/K ND', {margin:'0 0 0 8px', color:'#999'}));
+        }
+      });
+    });
+  });
+
+  // Render y botón Export
+  res.get('available').evaluate(function(ok){
+    if(!ok){
+      map.add(ui.Map.Layer(ee.Image(0), {min:0,max:1,palette:['eeeeee']}, 'Sin modelo', true));
+      panel.add(map);
+      map.centerObject(AOI, 10);
+      return;
+    }
+
+    var rgb   = ee.Image(res.get('rgb'));
+    var disp  = ee.Image(res.get('disp'));
+    var codes = ee.Image(res.get('codes'));   // <--- esta usamos para exportar
+    var seg   = ee.Image(res.get('segEdges'));
+
+    var lyrRGB  = ui.Map.Layer(rgb,  {min:0, max:60}, 'RGB m'+month, true);
+    var lyrCLAS = ui.Map.Layer(disp, {min:0, max:K_JS-1, palette: PALETTE_JS}, 'Clasif m'+month, true, 0.9);
+    var lyrSEG  = ui.Map.Layer(seg,  {min:0, max:1, palette:['000000']}, 'Seg', false);
+
+    map.add(lyrRGB); map.add(lyrCLAS); map.add(lyrSEG);
+    map.centerObject(AOI, 10);
+
+    var cbRGB = ui.Checkbox('RGB', true,  function(on){ lyrRGB.setShown(on);  });
+    var cbSEG = ui.Checkbox('Seg', false, function(on){ lyrSEG.setShown(on);  });
+
+    // ======= BOTÓN EXPORTAR ASSET =======
+    var btnExport = ui.Button({
+      label: 'Exportar',
+      style: {margin:'0 0 0 8px', width:'80px'},
+      onClick: function(){
+
+        var outName = cfg.code + '_m' + (month < 10 ? '0'+month : month);
+        var assetId = 'projects/ee-royyali/assets/CLASIFICACION/' + outName;
+
+        Export.image.toAsset({
+          image: codes.toInt8(),
+          description: outName,
+          assetId: assetId,
+          region: AOI,
+          scale: cfg.scale,
+          maxPixels: 1e13
+        });
+
+        btnExport.setLabel('✔ Exportado');
+        btnExport.setDisabled(true);
+      }
+    });
+
+    tools.add(cbRGB);
+    tools.add(cbSEG);
+    tools.add(btnExport);
+
+    panel.add(map);
+  });
+
+  return { panel: panel, map: map };
+}
+// 12 mini-mapas
+var miniMaps = [];
+for (var m = 1; m <= 12; m++){
+  var mm = miniMap(m);
+  if      (m<=3)  col1.add(mm.panel);
+  else if (m<=6)  col2.add(mm.panel);
+  else if (m<=9)  col3.add(mm.panel);
+  else            col4.add(mm.panel);
+  miniMaps.push(mm.map);
+}
+ui.Map.Linker(miniMaps);
+
+// ---- Tabla de áreas (ha) solo meses con modelo ----
+var monthsEE = ee.List.sequence(1,12);
+
+// Generamos lista con posibles null y limpiamos null a nivel lista
+var featsList = monthsEE.map(function(m){
+  m = ee.Number(m);
+  var r = classifyMonth(m);
+  return ee.Algorithms.If(
+    ee.Number(r.get('available')).eq(1),
+    areasByClassSafe(ee.Image(r.get('codes')), AOI, cfg.scale, m),
+    null
+  );
+});
+featsList = ee.List(featsList).removeAll([null]);
+
+var featsPerMonth = ee.FeatureCollection(featsList)
+  .map(function(f){ return ee.Feature(f).set('month', ee.Number(f.get('month')).toInt()); })
+  .sort('month');
+
+// Columnas explícitas para tabla (month + todas las clases del SCHEMA)
+var columns = ee.List(['month']).cat(LABEL_LIST);
+var featsForTable = featsPerMonth.map(function(f){
+  return ee.Feature(null, ee.Feature(f).toDictionary(columns));
+});
+
+var tbl = ui.Chart.feature.byFeature(featsForTable, 'month')
+  .setChartType('Table')
+  .setOptions({allowHtml: true, page: 'enable', pageSize: 12});
+
+sidebar.add(ui.Label('Áreas por mes (ha)', {fontWeight:'bold', margin:'8px 0 4px 0'}));
+sidebar.add(tbl);
+
+// ---- Leyenda: solo clases con área > 0 en los meses disponibles ----
+var usedLabels = ee.List(LABEL_LIST).map(function(label){
+  var s = featsPerMonth.aggregate_sum(ee.String(label));
+  return ee.Algorithms.If(ee.Number(s).gt(0), label, null);
+}).removeAll([null]);
+
+usedLabels.evaluate(function(labels){
+  labels = labels || [];
+  var set = {}; labels.forEach(function(l){ set[l] = true; });
+
+  legendPanel.clear();
+  SCHEMA.getInfo().forEach(function(item){
+    var code  = item.code;
+    var name  = item.name;
+    var color = item.color;
+    var key = (code + '_' + name.toLowerCase().split(' ').join('_'));
+    if (!set[key]) return;
+
+    legendPanel.add(ui.Panel({
+      layout: ui.Panel.Layout.flow('horizontal'),
+      widgets: [
+        ui.Label({style:{backgroundColor:color, padding:'8px', margin:'0 8px 0 0', border:'1px solid #999'}}),
+        ui.Label(code + ' – ' + name)
+      ]
+    }));
+  });
+});
+
+// ---- Montaje final y capas de referencia opcionales ----
+ui.root.add(ui.SplitPanel({
+  firstPanel: sidebar,
+  secondPanel: grid,
+  orientation: 'horizontal',
+  wipe: false,
+  style: {stretch: 'both'}
+}));
+
+Map.centerObject(AOI, 10);
+Map.addLayer(mbc3, {min:0, max:17, palette: PALETTE_JS.slice(0,29)}, 'MapBiomas 2023', false);
+Map.addLayer(wc,   {min:0, max:17, palette: PALETTE_JS.slice(0,17)}, 'WorldCover 2021', false);

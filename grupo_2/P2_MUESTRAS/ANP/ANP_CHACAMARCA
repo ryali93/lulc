@@ -1,5 +1,5 @@
 /**** Start of imports. If edited, may not auto-convert in the playground. ****/
-var pajonal = /* color: #d63000 */ee.FeatureCollection(
+var c28_pajonal = /* color: #d63000 */ee.FeatureCollection(
         [ee.Feature(
             ee.Geometry.Polygon(
                 [[[-75.96161832575547, -11.213145971643929],
@@ -91,7 +91,7 @@ var pajonal = /* color: #d63000 */ee.FeatureCollection(
               "clase": 28,
               "system:index": "7"
             })]),
-    bofedal = /* color: #98ff00 */ee.FeatureCollection(
+    c12_bofedal = /* color: #98ff00 */ee.FeatureCollection(
         [ee.Feature(
             ee.Geometry.Polygon(
                 [[[-75.98678997131103, -11.199659545994223],
@@ -221,7 +221,7 @@ var pajonal = /* color: #d63000 */ee.FeatureCollection(
             {
               "system:index": "12"
             })]),
-    urbano = /* color: #0b4a8b */ee.FeatureCollection(
+    c01_area_urbana = /* color: #0b4a8b */ee.FeatureCollection(
         [ee.Feature(
             ee.Geometry.Polygon(
                 [[[-76.00241159808743, -11.208421063788217],
@@ -325,7 +325,7 @@ var pajonal = /* color: #d63000 */ee.FeatureCollection(
             {
               "system:index": "4"
             })]),
-    afloramiento_rocoso = /* color: #d6d2ae */ee.FeatureCollection(
+    c26_afloramiento_rocoso = /* color: #d6d2ae */ee.FeatureCollection(
         [ee.Feature(
             ee.Geometry.Polygon(
                 [[[-75.99287673323566, -11.206832790498492],
@@ -447,7 +447,7 @@ var pajonal = /* color: #d63000 */ee.FeatureCollection(
             {
               "system:index": "8"
             })]),
-    mineria = /* color: #293dff */ee.FeatureCollection(
+    c02_mineria = /* color: #293dff */ee.FeatureCollection(
         [ee.Feature(
             ee.Geometry.Polygon(
                 [[[-75.96149831648437, -11.200905166472909],
@@ -565,7 +565,7 @@ var pajonal = /* color: #d63000 */ee.FeatureCollection(
             {
               "system:index": "9"
             })]),
-    mineria_9 = /* color: #bf39d2 */ee.FeatureCollection(
+    c02_mineria_9 = /* color: #bf39d2 */ee.FeatureCollection(
         [ee.Feature(
             ee.Geometry.Polygon(
                 [[[-75.96182521875218, -11.20416582515889],
@@ -598,7 +598,7 @@ var pajonal = /* color: #d63000 */ee.FeatureCollection(
             {
               "system:index": "2"
             })]),
-    pasto = /* color: #00ffff */ee.FeatureCollection(
+    c29_pasto = /* color: #00ffff */ee.FeatureCollection(
         [ee.Feature(
             ee.Geometry.Polygon(
                 [[[-75.97916548064401, -11.21397913901838],
@@ -661,7 +661,7 @@ var pajonal = /* color: #d63000 */ee.FeatureCollection(
 
 // === Importar módulo con utilidades Planet ===
 var mosaic = require('users/ryali93/lulc:UTILES/planet.js'); // usa función getPlanetMonthlyImage()
-
+var samplesUtils= require('users/ryali93/lulc:UTILES/samples_anp.js')
 //----------------------------------------------------
 // 1. PARÁMETROS GENERALES
 //----------------------------------------------------
@@ -878,13 +878,7 @@ updateLayer();
 //                                       mineria,
 //                                       mineria_9,
 //                                       pasto]).flatten();
-exports.samples =  [pajonal.map(function(f) { return f.set('clase', 28) }),
-                      bofedal.map(function(f) { return f.set('clase', 12) }),
-                      urbano.map(function(f) { return f.set('clase', 1) }),
-                      afloramiento_rocoso.map(function(f) { return f.set('clase', 26) }),
-                      mineria.map(function(f) { return f.set('clase', 2) }),
-                      mineria_9.map(function(f) { return f.set('clase', 2) }),
-                      pasto.map(function(f) { return f.set('clase', 29) })]
+
                       
 // Export.table.toAsset({
 //   collection: list_geom,
@@ -892,3 +886,28 @@ exports.samples =  [pajonal.map(function(f) { return f.set('clase', 28) }),
 //   assetId: 'projects/ee-anp-lineabase/assets/AUXILIAR-DATA/geometry/' +
 //             tipo_muestra + '-' + year + '-draw-' + version
 // });
+
+
+
+//----------------------------------------------------
+// 8. EXPORTAR MUESTRAS MANUALES
+//----------------------------------------------------
+
+var ANP = "SH01";  // Código del ANP
+
+var fcDict = {
+  c28_pajonal: c28_pajonal,
+  c12_bofedal: c12_bofedal,
+  c01_area_urbana: c01_area_urbana,
+  c26_afloramiento_rocoso:c26_afloramiento_rocoso,
+  c02_mineria: c02_mineria,
+  c02_mineria_9: c02_mineria_9,
+  c29_pasto: c29_pasto
+};
+
+// === Generar colección final de samples ===
+var sh01_samples = samplesUtils.generarSamples(ANP, fcDict);
+print("✅ Muestras generadas SH01:", sh01_samples, sh01_samples.size());
+
+// === Exportar para ser consumido en clasificación ===
+exports.SH01 = sh01_samples;

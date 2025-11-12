@@ -1,0 +1,196 @@
+// =========================================
+// P02B – Filtro de Moda/Frecuencia Temporal (12 meses)
+// Requiere: users/ryali93/lulc:UTILES/utils_post.js
+// Lee:  P02A-{code}  desde DIR_IN_POST
+// Escribe: P02B-{code} a DIR_OUT_POST
+// =========================================
+
+var up = require('users/ryali93/lulc:UTILES/utils_post.js');
+
+// ------------------ PARÁMETROS ------------------
+var param = {
+  code_region: 'BP05',
+  year: 2023,
+  nodata: 17,
+
+  // I/O
+  DIR_IN_POST:  'projects/ee-gmilagrosmj/assets/clasificacion_post',
+  DIR_OUT_POST: 'projects/ee-gmilagrosmj/assets/clasificacion_post',
+
+  // Región
+  REGION_FC:   'projects/ee-teledetecciondde/assets/Shp_ANP_ZA_ZR_ACR_ACP_Dissolve',
+  REGION_PROP: 'CODIGO',
+
+  // Vista
+  month_preview: 4,
+  show_layers: true,
+
+  // --- CONFIG FRECUENCIA ---
+  FF_naturales: {
+    clasesNat: [3,4,5,6,7,8,9,12,10,11,13,14,16], // ajusta a tu LUT
+    native_vegetation: 90,    // % total (suma de clasesNat) para activar el filtro
+    perc_majority_nat: 90     // % de frecuencia mínima para que una claseNat gane
+  },
+  FF_usos: {
+    clasesUso: [1,2],         // ej. urbano, minería
+    usos_cobertura: 50,       // % total (suma de clasesUso) para activar el filtro
+    perc_majority_uso: 50     // % de frecuencia mínima para que una claseUso gane
+  },
+
+  // Exclusiones
+  exclusion: {
+    classes: [17],   // preserva SIN DATO por defecto
+    months:  []      // ej. [2, 8] para no tocar esos meses
+  },
+
+  // (Opcional) aplicar moda anual a ciertas clases "estables"
+  MODE_OVERRIDE_CLASSES: [1, 2] // p.ej. fuerza urbano/minería a la moda anual donde la moda es 1 o 2
+};
+
+// Paleta (visual)
+var visCat = {
+  min: 1, max: 29,
+  palette: [
+    '#ff0000','#b40b0b','#d2ffa1','#5bdd4a','#139b01','#17ff7e','#0f5e00',
+    '#ffec13','#ceb747','#f8b3ff','#d72fff','#00ff00','#ccebc5','#13f5ff',
+    '#0000ff','#3b8aff','#d4d4d4','#2CA5A9','#C79CF4','#E8C27E','#9BBF6A',
+    '#D0F400','#F57F17','#8AA62D','#546D1D','#9E9E9E','#E6C98F','#D9B600',
+    '#66BB6A'
+  ]
+};
+
+// ------------------ HELPERS ------------------
+function bandNames12(){
+  return up.makeBandNames(ee.List.sequence(1,12)); // 'clasificacion_1'..'12'
+}
+function loadRegion(){
+  var fc = ee.FeatureCollection(param.REGION_FC)
+              .filter(ee.Filter.eq(param.REGION_PROP, param.code_region));
+  var rast = ee.Image(1).clip(fc.geometry()).selfMask();
+  return {fc: fc, raster: rast};
+}
+
+// frecuencia (%) de una clase c a lo largo de las 12 bandas
+function classFrequencyPct(img12, c){
+  // img12.eq(c) -> 12 bandas binarias; sum -> conteo [0..12]
+  return img12.eq(ee.Number(c))
+              .reduce(ee.Reducer.sum())
+              .multiply(100.0/12.0)       // → %
+              .rename('class' + c);
+}
+
+// construye un "winner map" para un set de clases con umbrales total y por clase
+function winnerMap(img12, classes, minTotalPct, perClassMajorityPct){
+  classes = classes || [];
+  if (!classes.length) return ee.Image(0);
+
+  // stack con frecuencia % por clase
+  var freqBands = ee.Image(classes.reduce(function(acc, c){
+    var f = classFrequencyPct(img12, c);
+    return acc ? acc.addBands(f) : f;
+  }, null));
+
+  // máscara: suma por clase (en %) supera minTotalPct
+  var totalPct = freqBands.reduce(ee.Reducer.sum());
+  var groupMask = ee.Image(0).where(totalPct.gt(minTotalPct), 1);
+
+  // “ganador” por clase (si su % >= perClassMajorityPct)
+  var winner = ee.Image(0);
+  classes.forEach(function(c){
+    var cFreq = freqBands.select('class' + c);
+    winner = winner.where(groupMask.eq(1).and(cFreq.gte(perClassMajorityPct)), c);
+  });
+
+  return winner.updateMask(winner.neq(0)); // 0=no ganador
+}
+
+// ------------------ PIPELINE ------------------
+var bn  = bandNames12();
+var reg = loadRegion();
+
+Map.centerObject(reg.fc, 12);
+Map.addLayer(reg.fc.style({color:'#ff0000', fillColor:'00000000'}), {}, 'ANP', false);
+
+// 1) Leer P02A
+var inAsset = param.DIR_IN_POST + '/P02A-' + param.code_region;
+// Si aún no generaste P02A, puedes leer P01 con: 'P01-' + param.code_region
+var img0 = ee.Image(inAsset).updateMask(reg.raster);
+
+// Asegurar bandas esperadas
+img0 = up.ensureMonthlyBands(img0, bn, reg.raster);
+
+// 2) Construir mapas de ganadores por grupo (nativo / usos)
+var winnerNat = winnerMap(
+  img0, param.FF_naturales.clasesNat,
+  param.FF_naturales.native_vegetation,
+  param.FF_naturales.perc_majority_nat
+);
+
+var winnerUso = winnerMap(
+  img0, param.FF_usos.clasesUso,
+  param.FF_usos.usos_cobertura,
+  param.FF_usos.perc_majority_uso
+);
+
+// 3) Aplicar overrides de frecuencia
+// Asigna la clase ganadora a TODOS los meses donde exista ganador
+var working = img0.where(winnerNat, winnerNat)
+                  .where(winnerUso, winnerUso);
+
+// 4) (Opcional) Override por MODA anual para clases estables (ej. 1,2)
+if (param.MODE_OVERRIDE_CLASSES && param.MODE_OVERRIDE_CLASSES.length){
+  var tmode = up.temporalMode(working); // 1 banda: 'temporal_mode'
+  param.MODE_OVERRIDE_CLASSES.forEach(function(c){
+    var cmask = tmode.eq(ee.Number(c));
+    working = working.where(cmask, ee.Number(c));
+  });
+}
+
+// 5) Exclusiones
+// 5.1) Preservar clases tal cual (ej. 17)
+if (param.exclusion && param.exclusion.classes && param.exclusion.classes.length){
+  working = up.keepClasses(img0, working, param.exclusion.classes);
+}
+
+// 5.2) Meses excluidos: reinyecta bandas originales
+if (param.exclusion && param.exclusion.months && param.exclusion.months.length){
+  var monthsToKeep = param.exclusion.months.map(function(m){ return 'clasificacion_' + m; });
+  working = up.keepMonths(img0, working, monthsToKeep);
+}
+
+// 6) Salida
+var outImg = working.select(bn)
+  .updateMask(reg.raster)
+  .set({
+    'codigo':      param.code_region,
+    'anio':        param.year,
+    'descripcion': 'P02B_filtro_moda_frecuencia'
+  });
+
+// 7) Export
+var outName  = 'P02B-' + param.code_region;
+var outAsset = param.DIR_OUT_POST + '/' + outName;
+
+print('P02B salida:', outImg);
+print('Export name:', outName);
+
+Export.image.toAsset({
+  image: outImg.byte(),
+  description: outName,
+  assetId: outAsset,
+  pyramidingPolicy: {'.default':'mode'},
+  region: reg.fc.geometry(),
+  scale: 4.7,
+  maxPixels: 1e13
+});
+
+// 8) Vistas (opcionales)
+if (param.show_layers){
+  Map.addLayer(img0.select('clasificacion_'+param.month_preview), visCat,
+               'P02A (mes '+param.month_preview+')', false);
+  Map.addLayer(outImg.select('clasificacion_'+param.month_preview), visCat,
+               'P02B (mes '+param.month_preview+')', true);
+
+  var tmode_prev = up.temporalMode(outImg);
+  Map.addLayer(tmode_prev, {min:1, max:29, palette:visCat.palette}, 'Temporal Mode P02B', false);
+}

@@ -1,0 +1,55 @@
+/**** CLASIFICACIÓN CON INTERSECCIÓN DE MAPBIOMAS Y WORLDCOVER ****/
+
+// --- 1. Cargar colecciones base --- //
+var mapbiomas = ee.Image('projects/mapbiomas-public/assets/peru/collection2/mapbiomas_peru_collection2_integration_v1')
+                  .select('classification_2021');
+var worldcover = ee.ImageCollection('ESA/WorldCover/v200').first().select('Map');
+
+// --- 2. Definir remapeo --- //
+var remap_MB = {
+  from: [3, 4, 12, 15, 21], // Ejemplo: valores originales
+  to:   [1, 2, 3, 4, 5]     // Nuevos valores armonizados
+};
+
+var remap_WC = {
+  from: [10, 20, 30, 40, 50],
+  to:   [1, 2, 3, 4, 5]
+};
+
+var mb_remap = mapbiomas.remap(remap_MB.from, remap_MB.to);
+var wc_remap = worldcover.remap(remap_WC.from, remap_WC.to);
+
+// --- 3. Alinear Mapbiomas y WorldCover --- //
+var intersection = mb_remap.addBands(wc_remap).reduce(ee.Reducer.mean());
+Map.addLayer(intersection, {min:1, max:5, palette:['red','green','blue','yellow','gray']}, 'Intersección');
+
+// --- 4. Cargar muestras de entrenamiento --- //
+// Aquí cargas tus muestras (subidas a tu carpeta de clasificación)
+var muestras = ee.FeatureCollection('projects/tu-proyecto/assets/clasificacion/muestras');
+
+// --- 5. Extraer valores espectrales de las imágenes para las muestras --- //
+var training = intersection.sampleRegions({
+  collection: muestras,
+  properties: ['class'], // asegúrate que tus muestras tengan una columna "class"
+  scale: 10
+});
+
+// --- 6. Entrenar el clasificador --- //
+var classifier = ee.Classifier.smileRandomForest(100).train({
+  features: training,
+  classProperty: 'class',
+  inputProperties: intersection.bandNames()
+});
+
+// --- 7. Clasificación --- //
+var clasificacion = intersection.classify(classifier);
+Map.addLayer(clasificacion, {min:1, max:5, palette:['red','green','blue','yellow','gray']}, 'Clasificación final');
+
+// --- 8. Exportar --- //
+//Export.image.toDrive({
+  //image: clasificacion,
+  //description: 'Clasificacion_Final',
+  //scale: 10,
+  //region: muestras.geometry(),
+  //maxPixels: 1e13
+//});

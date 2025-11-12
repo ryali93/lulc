@@ -1,0 +1,40 @@
+// === LIBRERÍAS ===
+var mosaic = require('users/ryali93/lulc:UTILES/planet.js');  // Para acceder al mosaico Planet
+var utils  = require('users/ryali93/lulc:UTILES/utils.js');   // Para usar la función de clasificación
+
+// === PARÁMETROS DE ENTRADA ===
+var year = 2023;            // año del mosaico
+var month = 8;              // mes del mosaico
+var anp_cod = 'PN04';       // código o nombre de tu área
+var version = '1';          // versión de salida (opcional)
+
+// === CARGAR MUESTRAS DESDE ASSET ===
+var samples = ee.FeatureCollection('projects/ee-depos/assets/muestras_PN04');
+print('Muestras cargadas:', samples.limit(5));
+
+// === DEFINIR ÁREA DE TRABAJO ===
+var base = utils.loadBaseData(anp_cod);
+var region = base.anp_za.geometry();
+
+// === OBTENER MOSAICO PLANET ===
+var planet = mosaic.getPlanetMonthlyImage(year, month, region).clip(region);
+Map.centerObject(region);
+Map.addLayer(planet, {bands: ['R', 'G', 'B'], min: 0, max: 80}, 'Planet RGB');
+
+// === CLASIFICACIÓN RANDOM FOREST ===
+var resultado = utils.classifyImage(
+  planet,
+  samples,
+  ['R','G','B','N','NDVI','NDWI'], // bandas usadas para entrenar
+  'clase',                         // nombre de la columna de etiqueta
+  100                              // número de árboles
+);
+
+// === VISUALIZACIÓN DEL RESULTADO ===
+var palette = [
+  "ffffff","ff0000","b40b0b","ffbd08","5bdd4a","139b01","17ff7e",
+  "0f5e00","ffec13","ceb747","f8b3ff","d72fff","00ff00","ccebc5",
+  "13f5ff","0000ff","3b8aff","d4d4d4"
+];
+
+Map.addLayer(resultado.classified, {min: 0, max: 17, palette: palette}, 'Clasificación Final');

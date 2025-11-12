@@ -105,6 +105,34 @@ var classifyImage = function (segImage, samplePoints, inputBands, classProp) {
   }
 }
 
+var paletteFromSchema = function(schema){ 
+  return schema.SCHEMA.map(function(d){ return d.color.replace('#',''); });
+};
+var codesFromSchema = function(schema){
+  return schema.SCHEMA.map(function(d){ return d.code; });
+};
+
+// UTILES/utils.js
+var kfoldRF = function(table, predictors, classProp, nTrees, seed, K){
+  var withFold = table.randomColumn('r', seed).map(function(f){
+    return ee.Feature(f).set('fold', ee.Number(f.get('r')).multiply(K).int());
+  });
+  var init = ee.Dictionary({oas: ee.List([]), kps: ee.List([])});
+  var out = ee.List.sequence(0, K-1).iterate(function(k, acc){
+    acc = ee.Dictionary(acc); k = ee.Number(k);
+    var trainK = withFold.filter(ee.Filter.neq('fold', k));
+    var testK  = withFold.filter(ee.Filter.eq('fold',  k));
+    var rfK = ee.Classifier.smileRandomForest({numberOfTrees: nTrees, seed: seed})
+      .train({features: trainK, classProperty: classProp, inputProperties: predictors});
+    var cmK = testK.classify(rfK).errorMatrix(classProp, 'classification');
+    return ee.Dictionary({
+      oas: ee.List(acc.get('oas')).add(cmK.accuracy()),
+      kps: ee.List(acc.get('kps')).add(cmK.kappa())
+    });
+  }, init);
+  return ee.Dictionary(out);
+};
+
 exports = {
   loadBaseData: loadBaseData,
   loadRemappedReference: loadRemappedReference,
@@ -114,5 +142,8 @@ exports = {
   loadCanopyHeight: loadCanopyHeight,
   getMonthlyPlanet: getMonthlyPlanet,
   applySNIC: applySNIC,
-  classifyImage: classifyImage
+  classifyImage: classifyImage,
+  paletteFromSchema: paletteFromSchema,
+  codesFromSchema: codesFromSchema,
+  kfoldRF: kfoldRF
 };

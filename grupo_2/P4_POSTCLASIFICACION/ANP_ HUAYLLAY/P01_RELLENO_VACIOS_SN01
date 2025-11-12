@@ -1,0 +1,183 @@
+// =========================================
+// P01 – Relleno de vacíos mensuales (gap-fill)
+// Requiere: users/ryali93/lulc:UTILES/utils_post.js
+// =========================================
+
+var up = require('users/ryali93/lulc:UTILES/utils_post.js'); // tus utils_post
+
+// ------------------ PARÁMETROS ------------------
+var param = {
+  code_region: 'SN01',             // Ej.: 'BP05', 'RVS01', etc.
+  year: 2023,                      // Solo para metadatos / visualización
+  nodata: 17,                      // Clase para SIN DATO
+  DIR_IN_CLASS: 'projects/ee-victorianavarrov0/assets/clasificacion_1',
+  DIR_OUT_POST: 'projects/ee-victorianavarrov0/assets/clasificacion_post',
+  REGION_FC: 'projects/ee-teledetecciondde/assets/Shp_ANP_ZA_ZR_ACR_ACP_Dissolve',
+  REGION_PROP: 'CODIGO',
+
+  // Visualización rápida
+  month_preview: 5,               // Mes a mostrar en mapa
+  show_layers: true,
+
+  // (Opcional) Polígonos de remapeo (array de ee.FeatureCollection),
+  // cada feature con props:
+  //  - original: "1,8,15" (lista CSV de clases originales)
+  //  - new:      "1,8,15" (lista CSV de clases nuevas)
+  //  - t0:       número mes inicial (1..12)
+  //  - t1:       número mes final   (1..12)
+  remapGeometry: [
+    // ee.FeatureCollection([...features...])
+  ]
+};
+
+// Paleta categórica (ajústala a tu LUT final)
+var visCat = {
+  min: 1, max: 29,
+  palette: [
+    '#ff0000','#b40b0b','#d2ffa1','#5bdd4a','#139b01','#17ff7e','#0f5e00',
+    '#ffec13','#ceb747','#f8b3ff','#d72fff','#00ff00','#ccebc5','#13f5ff',
+    '#0000ff','#3b8aff','#d4d4d4','#2CA5A9','#C79CF4','#E8C27E','#9BBF6A',
+    '#D0F400','#F57F17','#8AA62D','#546D1D','#9E9E9E','#E6C98F','#D9B600',
+    '#66BB6A'
+  ]
+};
+
+// ------------------ HELPERS ------------------
+
+// Construye lista de assetIds mensuales según patrón DIR/CODE/CODE_mXX (XX=01..12)
+function buildMonthlyAssetIdsJS(dir, code) {
+  var ids = [];
+  for (var m = 1; m <= 12; m++) {
+    var mm = (m < 10 ? '0' + m : '' + m);
+    ids.push(dir + '/' + code + '/' + code + '_m' + mm);
+  }
+  return ids;
+}
+
+
+// Carga los 12 meses, renombra a 'clasificacion' y apila a 12 bandas "clasificacion_1..12"
+function loadMonthlyStack(dir, code, regionRaster, bandNames){
+  // Lista de assets esperados (cliente)
+  var ids = buildMonthlyAssetIdsJS(dir, code);
+
+  // Convierte cada id (cliente) a ee.Image
+  var imgs = ids.map(function(id) {
+    return ee.Image(id).rename('clasificacion');
+  });
+
+  // ImageCollection desde array de ee.Image (cliente)
+  var ic = ee.ImageCollection(imgs);
+
+  // Apila y renombra a clasificacion_1..12
+  var stack = ic.toBands().rename(bandNames);
+
+  // Asegura 12 bandas y máscara de región
+  stack = up.ensureMonthlyBands(stack, bandNames, regionRaster)
+            .updateMask(regionRaster);
+  return stack;
+}
+// Remapeo por polígonos, igual a tu referencia.
+// polygons: array de ee.FeatureCollection
+function remapWithPolygons(imageYear, polygons, bandNames){
+  if (!polygons || polygons.length === 0) return imageYear;
+
+  polygons.forEach(function(fc){
+    var remappedImgs = fc.map(function(layer){
+      layer = ee.Feature(layer);
+      var from = ee.String(layer.get('original')).split(',');
+      var to   = ee.String(layer.get('new')).split(',');
+
+      var t0 = ee.Number.parse(layer.get('t0'));
+      var t1 = ee.Number.parse(layer.get('t1'));
+      var yearsSel = ee.List.sequence(t0, t1, 1);
+
+      from = from.map(function(x){ return ee.Number.parse(x); });
+      to   = to.map(function(x){ return ee.Number.parse(x); });
+
+      var area = imageYear.clip(layer.geometry());
+
+      // Iterar meses seleccionados y remapear dentro del polígono
+      var remapImg = ee.Image(yearsSel.iterate(function(m, acc){
+        m = ee.Number(m).toInt16();
+        acc = ee.Image(acc);
+
+        var bname = ee.String('clasificacion_').cat(m.format());
+        var remappedB = area.select(bname).remap(from, to).rename(bname);
+
+        return acc.addBands(remappedB, null, true);
+      }, area));
+
+      return remapImg;
+    });
+
+    var merged = ee.ImageCollection(remappedImgs).mosaic();
+    imageYear  = merged.unmask(imageYear).updateMask(imageYear.neq(27)); // mantiene tu lógica de 27 si la usas
+  });
+
+  // Ordenar bandas de salida
+  return imageYear.select(bandNames);
+}
+
+// ------------------ PIPELINE P01 ------------------
+
+var months = ee.List.sequence(1,12);
+var bandNames = up.makeBandNames(months); // ["clasificacion_1",..,"_12"]
+
+// 1) Región (vector y raster máscara)
+var regions = ee.FeatureCollection(param.REGION_FC)
+                .filter(ee.Filter.eq(param.REGION_PROP, param.code_region));
+var regionRaster = ee.Image(1).clip(regions.geometry()).selfMask();
+
+Map.centerObject(regions, 12);
+Map.addLayer(regions.style({color:'ff0000', fillColor:'00000000'}), {}, 'ANP', false);
+
+// 2) Cargar stack mensual y garantizar bandas
+var inImg = loadMonthlyStack(param.DIR_IN_CLASS, param.code_region, regionRaster, bandNames);
+
+
+// 3) Opcional: remapeos por polígonos antes del fill (igual a tu referencia)
+if (param.remapGeometry && param.remapGeometry.length){
+  inImg = remapWithPolygons(inImg, param.remapGeometry, bandNames);
+}
+
+// 4) Enmascarar nodata (17) en todas las bandas ANTES del fill
+inImg = up.maskValueAllBands(inImg, bandNames, param.nodata);
+
+// 5) Gap-fill bidireccional (forward+backward)
+var filled = up.gapFillBidirectional(inImg, bandNames)
+  // Reinyectar nodata donde siga sin valor tras el fill
+  .unmask(param.nodata)
+  .select(bandNames)
+  .set({
+    'codigo':       param.code_region,
+    'anio':         param.year,
+    // 'version_in':   param.version_input,
+    // 'version_out':  param.version_output,
+    'descripcion':  'P01_gap_fill'
+  });
+
+// ------------------ EXPORT ------------------
+// Un único asset con las 12 bandas de clasificación
+var outName  = 'P01-' + param.code_region;
+var outAsset = param.DIR_OUT_POST + '/' + outName;
+
+print('Salida (stack 12 bandas):', filled);
+print('Export name:', outName);
+
+Export.image.toAsset({
+  image: filled.byte(),
+  description: outName,
+  assetId: outAsset,
+  pyramidingPolicy: {'.default': 'mode'},
+  region: regions.geometry(),
+  scale: 4.7,
+  maxPixels: 1e13
+});
+
+// ------------------ VISTAS (opcionales) ------------------
+if (param.show_layers){
+  Map.addLayer(inImg.select('clasificacion_' + param.month_preview), visCat,
+               'Original (mes ' + param.month_preview + ')', false);
+  Map.addLayer(filled.select('clasificacion_' + param.month_preview), visCat,
+               'GapFill (mes ' + param.month_preview + ')', true);
+}

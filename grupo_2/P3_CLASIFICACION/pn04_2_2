@@ -1,0 +1,279 @@
+/********************
+ * PN04 – Clasificación mensual (fenológica)
+ * Clasifica zona Este y Oeste por separado y luego las une antes de exportar.
+ ********************/
+
+// === IMPORTS ===
+var samplesMod = require('users/ryali93/lulc:P2_MUESTRAS/PN04_samples.js');
+var utils      = require('users/ryali93/lulc:UTILES/utils.js');
+var schema     = require('users/ryali93/lulc:UTILES/schema.js');
+
+// === CONFIG ===
+var cfg = {
+  code: 'PN04',
+  year: 2023,
+  blueThr: 30,
+  scale: 10,           // cambia a 5 si quieres más detalle (cuidado con límites de memoria)
+  seed: 42,
+  nTrees: 200,
+  trainSplit: 0.7,
+  perClass: 200,
+  pointsPerFeat: 10,
+  minPolygonsForPPF: 5,
+  doExport: true
+};
+
+/* ---------------- SCHEMA & helpers ---------------- */
+function toSafeLabel(code, name) {
+  var parts  = ee.String(name).split(' ');
+  var joined = ee.List(parts).join('_');
+  return ee.String(code).cat('_').cat(joined.toLowerCase());
+}
+
+var SCHEMA = schema.SCHEMA.map(function(d){
+  d = ee.Dictionary(d);
+  return ee.Dictionary({
+    code:  ee.Number(d.get('code')),
+    name:  ee.String(d.get('name')),
+    color: ee.String(d.get('color'))
+  });
+});
+
+var VALID_CODES   = ee.List(SCHEMA.map(function(d){ return ee.Dictionary(d).get('code'); }));
+var IDX_LIST      = ee.List.sequence(0, VALID_CODES.length().subtract(1));
+var LABEL_LIST    = SCHEMA.map(function(d){ d = ee.Dictionary(d); return toSafeLabel(d.get('code'), d.get('name')); });
+var CODE_STR_LIST = VALID_CODES.map(function(c){ return ee.Number(c).format(); });
+var CODE2LABEL    = ee.Dictionary.fromLists(CODE_STR_LIST, LABEL_LIST);
+var PALETTE_EE = ee.List(SCHEMA.map(function(d){ return ee.String(ee.Dictionary(d).get('color')).slice(1); }));
+var K_EE = VALID_CODES.length();
+
+/* ---------------- Área y división ESTE–OESTE ---------------- */
+
+var base = utils.loadBaseData(cfg.code);
+var AOI  = base.anp_za.geometry();
+
+// === División automática en Este y Oeste ===
+var bounds = AOI.bounds();
+var coords = ee.List(bounds.coordinates().get(0));
+var xs = coords.map(function(c){ return ee.Number(ee.List(c).get(0)); });
+var minX = ee.Number(xs.reduce(ee.Reducer.min()));
+var maxX = ee.Number(xs.reduce(ee.Reducer.max()));
+var midX = minX.add(maxX).divide(2);
+
+// Crea rectángulos globales que cortan por la línea media de longitudes
+var westAOI = AOI.intersection(ee.Geometry.Rectangle([minX, -90, midX, 90]), 1);
+var eastAOI = AOI.intersection(ee.Geometry.Rectangle([midX, -90, maxX, 90]), 1);
+
+// Añadir para verificación visual
+Map.addLayer(westAOI, {color: 'blue'}, 'Zona Oeste');
+Map.addLayer(eastAOI, {color: 'red'}, 'Zona Este');
+
+/* ---------------- Predictores & samples ---------------- */
+var predictors = ['R','G','B','N','NDVI','NDWI','elevation','slope','canopy_height','segments'];
+var samplesAll = ee.FeatureCollection(samplesMod.PN04);
+print('Samples PN04 (total):', samplesAll.size());
+
+/* ---------------- Helpers ---------------- */
+function toSafeClassAndIdx(imgCodes){
+  var clsSafe = imgCodes.remap(VALID_CODES, VALID_CODES, 0).rename('code');
+  clsSafe = clsSafe.updateMask(clsSafe.neq(0));
+  var idx = clsSafe.remap(VALID_CODES, IDX_LIST, -1).rename('idx')
+                   .updateMask(clsSafe.eq(clsSafe));
+  return {code: clsSafe, idx: idx};
+}
+
+/**
+ * buildSNICForMonth(m, region)
+ * - m: número de mes (1..12)
+ * - region: geometry para cargar pendientes/elevación/canopy y recortar mosaico
+ *
+ * Nota: algunos datasets requieren el AOI para cargar correctamente elevation/slope.
+ */
+function buildSNICForMonth(m, region){
+  // utils.getMonthlyPlanet espera (year, monthIndex0, region, blueThr) según tu fix anterior
+  var p = utils.getMonthlyPlanet(cfg.year, ee.Number(m).subtract(1), region, cfg.blueThr);
+  var pExt = p.addBands(utils.loadSlopeElevation(region))
+              .addBands(utils.loadCanopyHeight(region));
+  var sn = utils.applySNIC(pExt);
+  return {planet: pExt, snic: sn};
+}
+
+function getSamplesForMonth(m){
+  return samplesAll.filter(ee.Filter.listContains('meses', m));
+}
+
+function rasterizeClasses(samplesMonth, region){
+  return ee.Image().byte().paint(samplesMonth, 'clase').rename('clase').clip(region);
+}
+
+function classPointsForMonth(samplesMonth){
+  var hist = ee.Dictionary(samplesMonth.aggregate_histogram('clase'));
+  var ptsList = VALID_CODES.map(function(code){
+    code = ee.Number(code);
+    var nFeat = ee.Number(hist.get(code, 0));  // # de polígonos de esa clase
+    var ptsSmart = ee.Algorithms.If(
+      nFeat.gte(cfg.minPolygonsForPPF),
+      nFeat.multiply(cfg.pointsPerFeat),
+      cfg.perClass
+    );
+    var pts = ee.Number(ptsSmart).min(cfg.perClass).int();
+    return pts.max(0);
+  });
+  return ee.List(ptsList);
+}
+
+/* ---------------- Clasificación por mes (dividiendo AOI y uniendo antes de exportar) ---------------- */
+
+function classifyMonth(month){
+  month = ee.Number(month);
+  var sm = getSamplesForMonth(month);
+  var hasSamples = sm.size().gt(0);
+
+  return ee.Dictionary(ee.Algorithms.If(hasSamples, (function(){
+    // --- Zona Oeste ---
+    var imsWest = buildSNICForMonth(month, westAOI);
+    var smWest = sm.filterBounds(westAOI);
+    var classImgWest = rasterizeClasses(smWest, westAOI);
+    var classPtsWest = classPointsForMonth(smWest);
+    var stackWest = classImgWest.addBands(imsWest.snic.select(predictors));
+    var trainingWest = stackWest.stratifiedSample({
+      numPoints: 0,
+      classBand: 'clase',
+      classValues: VALID_CODES,
+      classPoints: classPtsWest,
+      region: westAOI,
+      scale: cfg.scale,
+      seed: cfg.seed,
+      geometries: false,
+      dropNulls: true,
+      tileScale: 2
+    });
+
+    // --- Zona Este ---
+    var imsEast = buildSNICForMonth(month, eastAOI);
+    var smEast = sm.filterBounds(eastAOI);
+    var classImgEast = rasterizeClasses(smEast, eastAOI);
+    var classPtsEast = classPointsForMonth(smEast);
+    var stackEast = classImgEast.addBands(imsEast.snic.select(predictors));
+    var trainingEast = stackEast.stratifiedSample({
+      numPoints: 0,
+      classBand: 'clase',
+      classValues: VALID_CODES,
+      classPoints: classPtsEast,
+      region: eastAOI,
+      scale: cfg.scale,
+      seed: cfg.seed,
+      geometries: false,
+      dropNulls: true,
+      tileScale: 2
+    });
+
+    // --- Merge de muestras de entrenamiento (este + oeste) ---
+    var trainingAll = trainingWest.merge(trainingEast);
+    var tbl = trainingAll.randomColumn('rand', cfg.seed);
+    var train = tbl.filter(ee.Filter.lt('rand', cfg.trainSplit));
+    var test  = tbl.filter(ee.Filter.gte('rand', cfg.trainSplit));
+    var canTrain = train.size().gt(0).and(test.size().gt(0));
+
+    return ee.Dictionary(ee.Algorithms.If(canTrain, (function(){
+      var rf = ee.Classifier.smileRandomForest({
+        numberOfTrees: cfg.nTrees,
+        seed: cfg.seed
+      }).train({
+        features: train,
+        classProperty: 'clase',
+        inputProperties: predictors
+      });
+
+      var cm = test.classify(rf).errorMatrix('clase', 'classification');
+
+      // Clasificar cada región por separado (usando su SNIC / predictores)
+      var clsWest = imsWest.snic.select(predictors).classify(rf).clip(westAOI);
+      var clsEast = imsEast.snic.select(predictors).classify(rf).clip(eastAOI);
+
+      // Unir las dos clasificaciones: usar ImageCollection.mosaic()
+      var clsUnion = ee.ImageCollection([
+        clsWest,
+        clsEast
+      ]).mosaic().clip(AOI);
+
+      // Convertir a códigos "seguros" y obtener índice para display
+      var safe = toSafeClassAndIdx(clsUnion);
+
+      // Generar RGB compuesto de ambas mitades (mosaic sobre una ImageCollection)
+      var rgbUnion = ee.ImageCollection([
+        imsWest.planet.select(['R','G','B']).clip(westAOI),
+        imsEast.planet.select(['R','G','B']).clip(eastAOI)
+      ]).mosaic().clip(AOI);
+
+      return ee.Dictionary({
+        available: true,
+        rgb: rgbUnion,
+        codes: safe.code,
+        disp: safe.idx,
+        oa: cm.accuracy(),
+        kappa: cm.kappa()
+      });
+
+    })(), ee.Dictionary({available:false})));
+
+  })(), ee.Dictionary({available:false})));
+}
+
+/* ---------------- LAYERS Y EXPORTACIÓN ---------------- */
+
+var MONTHS = ee.List.sequence(1, 12);
+
+// PALETA JS y K_JS (evaluamos antes de añadir capas/exports)
+var PALETTE_JS, K_JS;
+PALETTE_EE.evaluate(function(p){
+  PALETTE_JS = p;
+  K_EE.evaluate(function(k){
+    K_JS = k;
+
+    // Añadir y exportar por cada mes
+    MONTHS.getInfo().forEach(function(m){
+      addLayersForMonth(m);
+    });
+
+    Map.centerObject(AOI, 10);
+  });
+});
+
+/**
+ * addLayersForMonth(m)
+ * - Ejecuta classifyMonth, agrega capas RGB y Clasificación (ocultas),
+ *   y crea la tarea de export (si cfg.doExport === true).
+ */
+function addLayersForMonth(m){
+  var mm  = (m < 10 ? '0' + m : '' + m);
+  var res = classifyMonth(ee.Number(m));
+
+  res.get('available').evaluate(function(ok){
+    if (!ok){
+      print('Mes', m, '— sin modelo disponible');
+      return;
+    }
+
+    var rgb   = ee.Image(res.get('rgb'));
+    var disp  = ee.Image(res.get('disp'));
+    var codes = ee.Image(res.get('codes'));
+
+    Map.addLayer(rgb,  {min:0, max:60},                          'RGB m' + mm,   false);
+    Map.addLayer(disp, {min:0, max:K_JS - 1, palette: PALETTE_JS}, 'Clasif m' + mm, false, 0.9);
+
+    // Exportar la UNIÓN final (clasificación para TODO el AOI)
+    if (cfg.doExport) {
+      var outName = cfg.code + '_m' + mm + '_union';
+      Export.image.toDrive({
+        image: codes.toInt16(),
+        description: outName,
+        fileNamePrefix: outName,
+        region: AOI,
+        scale: cfg.scale,
+        maxPixels: 1e13
+      });
+      print('Tarea de export creada:', outName);
+    }
+  });
+}

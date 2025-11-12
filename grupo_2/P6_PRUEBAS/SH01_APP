@@ -1,0 +1,358 @@
+// SH01_CHACAMARCA.js
+var samples = require('users/ryali93/lulc:P2_MUESTRAS/ANP/samples');
+var utils   = require('users/ryali93/lulc:UTILES/utils.js');
+var schema  = require('users/ryali93/lulc:UTILES/schema.js');
+
+var SAMPLE_LUT = {
+  'RVS01': 'RVS Laquipampa',
+  'ZR13': 'ZR Bosque de Zárate',
+  'RN06': 'RN Salinas y Aguada Blanca',
+  'RVS02': 'RVS Los Pantanos de Villa',
+  'SH01': 'SH Chacamarca',
+  'RN02': 'RN Junín',
+  'PN04': 'PN Huascarán',
+  'SH04': 'SH Bosque de Pomac',
+  'RN17': 'RN Illescas',
+  'BP05': 'BP Pagaibamba',
+  'CC02': 'CC Sunchubamba',
+  'ZR05': 'ZR Cordillera Huayhuash',
+  'SN01': 'SN Huayllay'
+}
+
+var samplesFC = ee.FeatureCollection(samples.sh01).flatten();
+
+var cfg = {
+  code:'SH01', 
+  year:2023, 
+  month:4, 
+  blueThr:30, 
+  scale:5, 
+  seed:42, 
+  nTrees:200, 
+  trainSplit:0.7
+};
+
+var palette_1_17 = ["ffffff", "ff0000","b40b0b","ffbd08","5bdd4a","139b01","17ff7e","0f5e00","ffec13","ceb747","f8b3ff","d72fff","00ff00","ccebc5","13f5ff","0000ff","3b8aff","d4d4d4"];
+var remap_MB = {
+    from: [3, 4, 5, 6, 9, 11, 12, 13, 15, 18, 21, 24, 25, 30, 31, 32, 33, 34],
+    to:   [5, 4, 6, 5, 7, 12,  8,  9,  8,  3,  3,  1, 10,  2, 15, 10, 15, 14]
+}
+var remap_WC = {
+    from: [10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100],
+    to:   [ 7,  9,  8,  3,  1, 10, 14, 15, 12,  6,  17]
+}
+
+var base        = utils.loadBaseData(cfg.code);
+var planet      = utils.getMonthlyPlanet(cfg.year, cfg.month, base.anp_za.geometry(), 30);
+var mbc3        = utils.loadMapBiomas2023(base.anp_za.geometry()).remap(remap_MB.from, remap_MB.to);
+var wc          = utils.loadWorldCover2021(base.anp_za.geometry()).remap(remap_WC.from, remap_WC.to);
+var topography  = utils.loadSlopeElevation(base.anp_za.geometry())
+var c_height    = utils.loadCanopyHeight(base.anp_za.geometry())
+// Add variables:
+planet          = planet.addBands(topography)
+planet          = planet.addBands(c_height)
+var snic        = utils.applySNIC(planet);
+
+// Map.centerObject(base.anp_za);
+// Map.addLayer(planet, {bands:['R','G','B'], min:0, max:60}, 'Planet RGB');
+Map.addLayer(mbc3,   {min: 0, max: 17, palette: palette_1_17}, 'MapBiomas');
+Map.addLayer(wc,     {min: 0, max: 17, palette: palette_1_17}, 'WorldCover');
+
+// ===== 3) SCHEMA y utilidades (server-side seguro) =====
+var SCHEMA = schema.SCHEMA;                                  // [{code,name,color}, ...]
+var SCHEMA_CODES   = SCHEMA.map(function(d){ return d.code; }); // array JS de códigos
+var SCHEMA_PALETTE = SCHEMA.map(function(d){ return d.color.replace('#',''); }); // array JS
+
+var CODE_LIST      = ee.List(SCHEMA_CODES);                       // lista EE: [1,2,...]
+var CODE_STR_LIST  = CODE_LIST.map(function(c){ return ee.Number(c).format(); }); // ["1","2",...]
+var LABEL_LIST     = ee.List(SCHEMA.map(function(d){
+  return d.code + '_' + d.name.replace(/\s+/g,'_').toLowerCase(); // "1_urbano"
+}));
+var CODE2LABEL     = ee.Dictionary.fromLists(CODE_STR_LIST, LABEL_LIST); // "1"->"1_urbano"
+var K              = SCHEMA_CODES.length; // tamaño (para repetir perClass)
+
+// ===== 4) Construir imagen de clases (rasterizar polígonos) =====
+var AOI = base.anp_za.geometry();
+var classImg = ee.Image().byte().paint(samplesFC, 'clase').rename('clase').clip(AOI);
+
+// ===== 5) Predictores (mantenemos tus bandas + segments) =====
+var predictors = ['R','G','B','N','NDVI','NDWI','elevation','slope','canopy_height','segments'];
+
+// Pila para muestreo estratificado: clase + predictores
+var stack = classImg.addBands(snic.select(predictors));
+
+// ===== 6) Muestreo estratificado balanceado por clase =====
+// Ajusta perClass si quieres menos/más puntos por clase (evita overfitting por polígonos enormes).
+var perClass = 300;
+
+var trainingAll = stack.stratifiedSample({
+  numPoints: 0,                                   // usamos classPoints explícito
+  classBand: 'clase',
+  classValues: CODE_LIST,
+  classPoints: ee.List.repeat(perClass, K),//ee.List.repeat(perClass, SCHEMA_CODES.length),
+  region: AOI,
+  scale: cfg.scale,
+  seed: cfg.seed,
+  geometries: false,
+  dropNulls: true,
+  tileScale: 2
+});
+
+// ===== 7) Split reproducible train/test =====
+var tbl = trainingAll.randomColumn('rand', cfg.seed);
+var train = tbl.filter(ee.Filter.lt('rand', cfg.trainSplit));
+var test  = tbl.filter(ee.Filter.gte('rand', cfg.trainSplit));
+
+// ===== 8) Entrenamiento RF =====
+var rf = ee.Classifier.smileRandomForest({
+  numberOfTrees: cfg.nTrees,
+  seed: cfg.seed
+}).train({
+  features: train,
+  classProperty: 'clase',
+  inputProperties: predictors
+});
+
+// ===== 9) Clasificación =====
+var classified = snic.select(predictors).classify(rf);
+
+// ===== 10) Métricas completas =====
+var cm = test.classify(rf).errorMatrix('clase','classification');
+print('Train n:', train.size());
+print('Test n:', test.size());
+print('Confusion Matrix:', cm);
+print('Overall Accuracy:', cm.accuracy());
+print('Kappa:', cm.kappa());
+print('User’s accuracy (UA):', cm.consumersAccuracy());
+print('Producer’s accuracy (PA):', cm.producersAccuracy());
+
+// ============== MINI-APP MULTIMAPA (12 meses) ==============
+// === SCHEMA y mapeos (server-side seguro) ===
+// var SCHEMA = schema.SCHEMA;  // [{code,name,color}, ...]
+// var SCHEMA_CODES   = SCHEMA.map(function(d){ return d.code; });
+// var SCHEMA_PALETTE = SCHEMA.map(function(d){ return d.color.replace('#',''); });
+
+// // Listas server-side
+// var CODE_LIST      = ee.List(SCHEMA_CODES);                                       // [1,2,...,29]
+// var CODE_STR_LIST  = CODE_LIST.map(function(c){ return ee.Number(c).format(); }); // ["1","2",...]
+// var LABEL_LIST     = ee.List(SCHEMA.map(function(d){
+//   return d.code + '_' + d.name.replace(/\s+/g,'_').toLowerCase();                 // "1_urbano", ...
+// }));
+
+// Diccionario server-side: "code(str)" -> "code_name(str)"
+var CODE2LABEL = ee.Dictionary.fromLists(CODE_STR_LIST, LABEL_LIST);
+
+// Remapea códigos -> índices 0..K-1 (para palette)
+function toDisplayIdx(imgCodes){
+  var idxList  = ee.List.sequence(0, K - 1);
+  return imgCodes.remap(CODE_LIST, idxList, -1);
+}
+
+// Áreas por clase (ha) sin getInfo() ni claves numéricas
+function areasByClass(imgCodes, geom, scale, monthNum){
+  var areaHa = ee.Image.pixelArea().divide(1e4);
+  var red = areaHa.addBands(imgCodes.rename('class')).reduceRegion({
+    reducer: ee.Reducer.sum().group({groupField: 1, groupName: 'class'}),
+    geometry: geom, scale: scale, maxPixels: 1e13, tileScale: 2
+  });
+
+  var groups = ee.List(ee.Dictionary(red).get('groups', []));
+  var classAreaDict = ee.Dictionary(groups.iterate(function(el, acc){
+    el = ee.Dictionary(el);
+    var cl  = ee.Number(el.get('class'));
+    var sum = ee.Number(el.get('sum'));
+    return ee.Dictionary(acc).set(cl, sum);
+  }, ee.Dictionary({})));
+
+  var base = ee.Dictionary({month: monthNum});
+  var completed = CODE_LIST.iterate(function(code, acc){
+    acc = ee.Dictionary(acc);
+    code = ee.Number(code);
+    var keyStr  = code.format();                       // "1","2",...
+    var colName = ee.String(CODE2LABEL.get(keyStr));   // "1_urbano"
+    var val     = ee.Number(classAreaDict.get(code, 0));
+    return acc.set(colName, val);
+  }, base);
+
+  return ee.Feature(null, ee.Dictionary(completed));
+}
+
+// Clasifica un mes con el RF ya entrenado
+function classifyMonth(month1_12){
+  var p = utils.getMonthlyPlanet(cfg.year, month1_12 - 1, AOI, cfg.blueThr);
+  var pExt = p.addBands(utils.loadSlopeElevation(AOI))
+              .addBands(utils.loadCanopyHeight(AOI));
+
+  var sn   = utils.applySNIC(pExt);               // <- usar el SNIC del mes actual
+  var seg  = sn.select('segments');
+  var edges = seg.reduceNeighborhood(ee.Reducer.max(), ee.Kernel.square(1))
+                 .neq(seg).selfMask();
+
+  var cls  = sn.select(predictors).classify(rf);  // <- antes usaba 'snic' (global)
+  var disp = toDisplayIdx(cls);
+
+  return {rgb: pExt.select(['R','G','B']), codes: cls, disp: disp, segEdges: edges};
+}
+
+// ====== UI ======
+ui.root.clear();
+
+var sidebar = ui.Panel({style: {width: '320px', padding: '8px'}});
+sidebar.add(ui.Label('Clasificación multimes – ' + cfg.code, {fontWeight:'bold', fontSize:'16px'}));
+
+// Placeholders para leyenda y tabla
+var legendTitle = ui.Label('Leyenda (clases usadas)', {fontWeight:'bold', margin:'8px 0 4px 0'});
+var legendPanel = ui.Panel();
+sidebar.add(legendTitle);
+sidebar.add(legendPanel);
+
+function col(){ return ui.Panel({layout: ui.Panel.Layout.flow('vertical'), style:{stretch:'both', padding:'0', margin:'0'}}); }
+var col1 = col(), col2 = col(), col3 = col(), col4 = col();
+var grid = ui.Panel({layout: ui.Panel.Layout.flow('horizontal'), style:{stretch:'both', padding:'0', margin:'0'}});
+grid.add(col1); grid.add(col2); grid.add(col3); grid.add(col4);
+
+// Mapita compacto con toggles por mes (RGB, MB, WC, Seg)
+function miniMap(month){
+  var map = ui.Map();
+  map.setControlVisibility({all:false, zoomControl:true});
+  map.style().set({width:'300px', height:'210px', margin:'1px', border:'1px solid #444'});
+
+  var res = classifyMonth(month);
+
+  var lyrRGB  = ui.Map.Layer(res.rgb,  {min:0, max:60}, 'RGB m'+month, true);
+  var lyrCLAS = ui.Map.Layer(res.disp, {min:0, max:SCHEMA_CODES.length-1, palette: SCHEMA_PALETTE}, 'Clasif m'+month, true, 0.9);
+  var lyrMB   = ui.Map.Layer(mbc3, {min:0, max:17, palette: SCHEMA_PALETTE.slice(0,17)}, 'MB', false);
+  var lyrWC   = ui.Map.Layer(wc,   {min:0, max:17, palette: SCHEMA_PALETTE.slice(0,17)}, 'WC', false);
+  var lyrSEG  = ui.Map.Layer(res.segEdges, {min:0, max:1, palette:['000000']}, 'Seg', false);
+
+  map.add(lyrRGB); map.add(lyrCLAS); map.add(lyrMB); map.add(lyrWC); map.add(lyrSEG);
+  map.centerObject(AOI, 10);
+
+  var tools = ui.Panel({layout: ui.Panel.Layout.flow('horizontal'), style:{margin:'0 0 2px 2px'}});
+  var cbRGB = ui.Checkbox('RGB', true,  function(on){ lyrRGB.setShown(on);  });
+  var cbMB  = ui.Checkbox('MB',  false, function(on){ lyrMB.setShown(on);   });
+  var cbWC  = ui.Checkbox('WC',  false, function(on){ lyrWC.setShown(on);   });
+  var cbSEG = ui.Checkbox('Seg', false, function(on){ lyrSEG.setShown(on);  });
+  tools.add(ui.Label('Mes ' + month, {fontWeight:'bold', margin:'0 8px 0 0'}));
+  tools.add(cbRGB); tools.add(cbMB); tools.add(cbWC); tools.add(cbSEG);
+
+  var block = ui.Panel({layout: ui.Panel.Layout.flow('vertical'), style:{padding:'0', margin:'0'}});
+  block.add(tools);
+  block.add(map);
+  return {panel: block, map: map, codes: res.codes};
+}
+
+// Crear 12 mapas (3x4) y linkearlos
+var maps = [];
+var monthsJS = ee.List.sequence(1,12).getInfo();
+monthsJS.forEach(function(m){
+  var mm = miniMap(m);
+  if      (m<=3)  col1.add(mm.panel);
+  else if (m<=6)  col2.add(mm.panel);
+  else if (m<=9)  col3.add(mm.panel);
+  else            col4.add(mm.panel);
+  maps.push(mm.map);
+});
+ui.Map.Linker(maps);
+
+// ====== Tabla de áreas (ha) por mes ======
+var featsPerMonth = ee.FeatureCollection(
+  ee.List.sequence(1,12).map(function(m){
+    m = ee.Number(m).toInt();
+    var r = classifyMonth(m);
+    var f = areasByClass(r.codes, AOI, cfg.scale, m);
+    return f.set('month', m);
+  })
+)
+// .filter(ee.Filter.notNull(ee.List(['month'])))   // (opcional, ver punto 1)
+.map(function(f){ return f.set('month', ee.Number(f.get('month')).toInt()); })
+.sort('month');
+
+// Selecciona columnas explícitas para evitar sorpresas
+var columns = ee.List(['month']).cat(LABEL_LIST);
+
+var featsForTable = featsPerMonth.map(function(f){
+  // copyProperties garantiza que la tabla sólo vea esas columnas
+  return ee.Feature(null, f.toDictionary(columns));
+});
+
+var tblChart = ui.Chart.feature.byFeature(featsForTable, 'month')
+  .setChartType('Table')
+  .setOptions({allowHtml: true, page: 'enable', pageSize: 12});
+
+sidebar.add(ui.Label('Áreas por mes (ha)', {fontWeight:'bold', margin:'8px 0 4px 0'}));
+sidebar.add(tblChart);
+
+
+// ====== Leyenda filtrada: solo clases presentes ======
+// var usedCodes = ee.List.sequence(1,12).map(function(m){
+//   m = ee.Number(m);
+//   var r = classifyMonth(m);
+
+//   // Obtener el nombre real de la banda de clasificación (suele ser 'classification')
+//   var bandName = ee.String(r.codes.bandNames().get(0));
+
+//   // Histograma por banda; puede venir vacío
+//   var dictAll  = ee.Dictionary(r.codes.reduceRegion({
+//     reducer: ee.Reducer.frequencyHistogram(),
+//     geometry: AOI, scale: cfg.scale, maxPixels: 1e13, tileScale: 2
+//   }));
+//   var hasBand  = dictAll.contains(bandName);
+//   var byBand   = ee.Dictionary(ee.Algorithms.If(hasBand, dictAll.get(bandName), ee.Dictionary({})));
+//   var keys     = byBand.keys();                    // lista de códigos como strings
+//   return keys;
+// }).flatten().distinct().map(function(k){ return ee.Number.parse(ee.String(k)); }).sort();
+
+// usedCodes.evaluate(function(usedList){
+//   usedList = usedList || [];
+//   var usedSet = {};
+//   usedList.forEach(function(k){ usedSet[parseInt(k,10)] = true; });
+
+//   legendPanel.clear();
+//   SCHEMA.forEach(function(item){
+//     if (!usedSet[item.code]) return;
+//     var row = ui.Panel({
+//       layout: ui.Panel.Layout.flow('horizontal'),
+//       widgets: [
+//         ui.Label({style:{backgroundColor:item.color, padding:'8px', margin:'0 8px 0 0', border:'1px solid #999'}}),
+//         ui.Label(item.code + ' – ' + item.name)
+//       ]
+//     });
+//     legendPanel.add(row);
+//   });
+// });
+// Suma de áreas por clase a lo largo de los 12 meses y filtra > 0
+var usedLabels = ee.List(LABEL_LIST).map(function(label){
+  var s = featsPerMonth.aggregate_sum(ee.String(label));
+  return ee.Algorithms.If(ee.Number(s).gt(0), label, null);
+})//.filter(ee.Filter.notNull());
+
+// Dibuja la leyenda con las clases realmente presentes
+usedLabels.evaluate(function(labels){
+  labels = labels || [];
+  var labelsSet = {};
+  labels.forEach(function(l){ labelsSet[l] = true; });
+
+  legendPanel.clear();
+  SCHEMA.forEach(function(item){
+    var key = item.code + '_' + item.name.replace(/\s+/g,'_').toLowerCase();
+    if (!labelsSet[key]) return;
+    var row = ui.Panel({
+      layout: ui.Panel.Layout.flow('horizontal'),
+      widgets: [
+        ui.Label({style:{backgroundColor:item.color, padding:'8px', margin:'0 8px 0 0', border:'1px solid #999'}}),
+        ui.Label(item.code + ' – ' + item.name)
+      ]
+    });
+    legendPanel.add(row);
+  });
+});
+
+// Montar UI final
+ui.root.add(ui.SplitPanel({
+  firstPanel: sidebar,
+  secondPanel: grid,
+  orientation: 'horizontal',
+  wipe: false,
+  style: {stretch: 'both'}
+}));

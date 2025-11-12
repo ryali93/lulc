@@ -1,0 +1,159 @@
+// =========================================
+// P03 – Filtro de moda espacial por mes (suaviza parches pequeños)
+// Requiere: users/ryali93/lulc:UTILES/utils_post.js
+// Lee:  P02B-{code}  desde DIR_IN_POST
+// Escribe: P03-{code} a DIR_OUT_POST
+// =========================================
+
+var up = require('users/ryali93/lulc:UTILES/utils_post.js');
+
+// ------------------ PARÁMETROS ------------------
+var param = {
+  code_region: 'RN02',
+  year: 2023,
+  nodata: 17,
+
+  // I/O
+  DIR_IN_POST:  'projects/ee-victorianavarrov0/assets/clasificacion_post/rn02',  // donde quedó P01
+  DIR_OUT_POST: 'projects/ee-victorianavarrov0/assets/clasificacion_post/rn02',  // salida P02A
+
+  // Región
+  REGION_FC:   'projects/ee-teledetecciondde/assets/Shp_ANP_ZA_ZR_ACR_ACP_Dissolve',
+  REGION_PROP: 'CODIGO',
+
+  // Conectividad / kernel
+  eightConnected: true,     // 8-conectado (true) o 4-conectado (false)
+  min_connect_pixel: 113,   // tamaño máximo del parche para ser "suavizado"
+  cpc_max: 400,             // límite superior en connectedPixelCount (evita saturación)
+  kernel_radius: 1,         // 1 → 3x3, 2 → 5x5, etc. para la moda espacial
+
+  // Preservar/Excluir
+  preserve_classes: [17],   // clases que NO se alteran
+  exclude_months:  [],      // ej. [2, 8] para no filtrar esos meses
+
+  // Vista
+  month_preview: 6,
+  show_layers: true
+};
+
+// Paleta (visual)
+var visCat = {
+  min: 1, max: 29,
+  palette: [
+    '#ff0000','#b40b0b','#d2ffa1','#5bdd4a','#139b01','#17ff7e','#0f5e00',
+    '#ffec13','#ceb747','#f8b3ff','#d72fff','#00ff00','#ccebc5','#13f5ff',
+    '#0000ff','#3b8aff','#d4d4d4','#2CA5A9','#C79CF4','#E8C27E','#9BBF6A',
+    '#D0F400','#F57F17','#8AA62D','#546D1D','#9E9E9E','#E6C98F','#D9B600',
+    '#66BB6A'
+  ]
+};
+
+// ------------------ HELPERS ------------------
+function bandNames12(){ return up.makeBandNames(ee.List.sequence(1,12)); }
+
+function loadRegion(){
+  var fc = ee.FeatureCollection(param.REGION_FC)
+              .filter(ee.Filter.eq(param.REGION_PROP, param.code_region));
+  var rast = ee.Image(1).clip(fc.geometry()).selfMask();
+  return {fc: fc, raster: rast};
+}
+
+// Aplica moda espacial 3x3 (o 5x5, etc.) SOLO donde el parche es pequeño
+function spatialFilterSmallPatches(img12, bn){
+  var exMonths = ee.List(param.exclude_months || []).map(function(m){
+    return ee.String('clasificacion_').cat(ee.Number(m).int());
+  });
+
+  var out = ee.Image(bn.iterate(function(b, acc){
+    b   = ee.String(b);
+    acc = ee.Image(acc);
+
+    var band = img12.select(b);
+
+    // ¿este mes está excluido?
+    var isExcluded = exMonths.contains(b);
+
+    // rama SI-excluido: devolver la banda original
+    // rama NO-excluido: aplicar el filtro de moda espacial solo en parches pequeños
+    var filteredBand = ee.Image(ee.Algorithms.If(
+      isExcluded,
+      band,
+      (function(){
+        // conectividad por componente (pixeles conectados con mismo valor)
+        var cpc   = band.connectedPixelCount(param.cpc_max, param.eightConnected);
+        var small = cpc.lte(param.min_connect_pixel);
+
+        // NO aplicar en clases preservadas
+        var keepMask = (param.preserve_classes || []).reduce(function(m, c){
+          return ee.Image(m).or(band.eq(ee.Number(c)));
+        }, ee.Image(0));
+        small = small.and(keepMask.neq(1));
+
+        // moda espacial con kernel cuadrado
+        var mode = band.focal_mode(param.kernel_radius, 'square', 'pixels');
+
+        // reemplazar solo donde el parche es pequeño
+        return band.where(small, mode).rename(b);
+      })()
+    ));
+
+    return acc.addBands(filteredBand.rename(b));
+  }, ee.Image().select()));
+
+  return out.select(bn);
+}
+
+// ------------------ PIPELINE ------------------
+var bn  = bandNames12();
+var reg = loadRegion();
+
+Map.centerObject(reg.fc, 12);
+Map.addLayer(reg.fc.style({color:'#ff0000', fillColor:'00000000'}), {}, 'ANP', false);
+
+// 1) Leer P02B (ajusta si quieres leer P02A o P01)
+var inAsset = param.DIR_IN_POST + '/P02B-' + param.code_region;
+var img0 = ee.Image(inAsset).updateMask(reg.raster);
+
+// 2) Garantizar 12 bandas
+img0 = up.ensureMonthlyBands(img0, bn, reg.raster);
+
+// 3) Filtro espacial por mes (parche pequeño → moda espacial)
+var working = spatialFilterSmallPatches(img0, bn);
+
+// 4) (opcional) volver a preservar/inyectar meses/clases si quieres reforzar reglas
+//    working = up.keepClasses(img0, working, param.preserve_classes);
+//    working = up.keepMonths(img0, working, exMonths);
+
+// 5) Salida
+var outImg = working.select(bn)
+  .updateMask(reg.raster)
+  .set({
+    'codigo':      param.code_region,
+    'anio':        param.year,
+    'descripcion': 'P03_filtro_moda_espacial'
+  });
+
+// 6) Export
+var outName  = 'P03-' + param.code_region;
+var outAsset = param.DIR_OUT_POST + '/' + outName;
+
+print('P03 salida:', outImg);
+print('Export name:', outName);
+
+Export.image.toAsset({
+  image: outImg.byte(),
+  description: outName,
+  assetId: outAsset,
+  pyramidingPolicy: {'.default':'mode'},
+  region: reg.fc.geometry(),
+  scale: 4.7,
+  maxPixels: 1e13
+});
+
+// 7) Vistas
+if (param.show_layers){
+  Map.addLayer(img0.select('clasificacion_'+param.month_preview), visCat,
+               'P02B (mes '+param.month_preview+')', false);
+  Map.addLayer(outImg.select('clasificacion_'+param.month_preview), visCat,
+               'P03 (mes '+param.month_preview+')', true);
+}
